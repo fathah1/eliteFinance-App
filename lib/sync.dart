@@ -7,26 +7,70 @@ class SyncService {
 
   bool _running = false;
 
-  Future<void> syncAll() async {
+  Future<void> syncAll({int? businessId}) async {
     if (_running) return;
     _running = true;
     try {
-      await _pushCustomers();
-      await _pushTransactions();
-      await _pullCustomers();
-      await _pullTransactions();
+      await _pushBusinesses();
+      if (businessId != null) {
+        await _pushCustomers(businessId);
+        await _pushTransactions(businessId);
+        await _pullCustomers(businessId);
+        await _pullTransactions(businessId);
+      }
+      await _pullBusinesses();
     } finally {
       _running = false;
     }
   }
 
-  Future<void> _pushCustomers() async {
+  Future<void> _pushBusinesses() async {
     final db = Db.instance;
-    final customers = await db.listCustomersWithBalance();
+    final businesses = await db.listBusinesses();
+    for (final b in businesses) {
+      if ((b['server_id'] as int?) != null) continue;
+      try {
+        final created = await Api.createBusiness(
+          name: (b['name'] ?? '').toString(),
+        );
+        if (created['id'] != null) {
+          await db.updateBusinessServerInfo(
+            id: b['id'] as int,
+            serverId: created['id'] as int,
+          );
+        }
+      } catch (_) {
+        // offline or server error
+      }
+    }
+  }
+
+  Future<void> _pullBusinesses() async {
+    try {
+      final data = await Api.getBusinesses();
+      await Db.instance.upsertBusinessesFromServer(
+          data.cast<Map<String, dynamic>>());
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  Future<void> _pushCustomers(int businessId) async {
+    final db = Db.instance;
+    final customers = await db.listCustomersWithBalance(businessId: businessId);
     for (final c in customers) {
       if ((c['server_id'] as int?) != null) continue;
       try {
+        final bizList = await db.listBusinesses();
+        final localBiz = bizList.firstWhere(
+          (b) => b['id'] == businessId,
+          orElse: () => {},
+        );
+        final serverBizId = localBiz['server_id'] as int?;
+        if (serverBizId == null) continue;
+
         final created = await Api.createCustomer(
+          businessId: serverBizId,
           name: (c['name'] ?? '').toString(),
           phone: (c['phone'] ?? '').toString().isEmpty
               ? null
@@ -46,12 +90,20 @@ class SyncService {
     }
   }
 
-  Future<void> _pushTransactions() async {
+  Future<void> _pushTransactions(int businessId) async {
     final db = Db.instance;
-    final txs = await db.listUnsyncedTransactions();
+    final txs = await db.listUnsyncedTransactions(businessId: businessId);
     if (txs.isEmpty) return;
 
-    final customers = await db.listCustomersWithBalance();
+    final customers = await db.listCustomersWithBalance(businessId: businessId);
+    final businesses = await db.listBusinesses();
+    final localBiz = businesses.firstWhere(
+      (b) => b['id'] == businessId,
+      orElse: () => {},
+    );
+    final serverBizId = localBiz['server_id'] as int?;
+    if (serverBizId == null) return;
+
     for (final t in txs) {
       final localCustomerId = t['customer_id'] as int;
       final customer = customers.firstWhere(
@@ -73,6 +125,7 @@ class SyncService {
           );
         } else {
           saved = await Api.createTransaction(
+            businessId: serverBizId,
             customerId: serverCustomerId,
             amount: (t['amount'] as num).toDouble(),
             type: (t['type'] ?? 'CREDIT').toString(),
@@ -93,9 +146,17 @@ class SyncService {
     }
   }
 
-  Future<void> _pullCustomers() async {
+  Future<void> _pullCustomers(int businessId) async {
     try {
-      final data = await Api.getCustomers();
+      final businesses = await Db.instance.listBusinesses();
+      final localBiz = businesses.firstWhere(
+        (b) => b['id'] == businessId,
+        orElse: () => {},
+      );
+      final serverBizId = localBiz['server_id'] as int?;
+      if (serverBizId == null) return;
+
+      final data = await Api.getCustomers(businessId: serverBizId);
       await Db.instance.upsertCustomersFromServer(
           data.cast<Map<String, dynamic>>());
     } catch (_) {
@@ -103,9 +164,17 @@ class SyncService {
     }
   }
 
-  Future<void> _pullTransactions() async {
+  Future<void> _pullTransactions(int businessId) async {
     try {
-      final data = await Api.getAllTransactions();
+      final businesses = await Db.instance.listBusinesses();
+      final localBiz = businesses.firstWhere(
+        (b) => b['id'] == businessId,
+        orElse: () => {},
+      );
+      final serverBizId = localBiz['server_id'] as int?;
+      if (serverBizId == null) return;
+
+      final data = await Api.getAllTransactions(businessId: serverBizId);
       await Db.instance.upsertTransactionsFromServer(
           data.cast<Map<String, dynamic>>());
     } catch (_) {

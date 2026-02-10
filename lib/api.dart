@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -39,8 +40,7 @@ class Api {
   }
 
   static Future<Map<String, dynamic>> login({
-    String? email,
-    String? phone,
+    required String username,
     required String password,
   }) async {
     final res = await http.post(
@@ -50,8 +50,7 @@ class Api {
         'Accept': 'application/json',
       },
       body: jsonEncode({
-        'email': email,
-        'phone': phone,
+        'username': username,
         'password': password,
       }),
     );
@@ -69,10 +68,11 @@ class Api {
   }
 
   static Future<Map<String, dynamic>> register({
+    required String username,
     required String name,
-    String? email,
-    String? phone,
     required String password,
+    required String businessName,
+    String? phone,
   }) async {
     final res = await http.post(
       Uri.parse('$baseUrl/register'),
@@ -81,9 +81,10 @@ class Api {
         'Accept': 'application/json',
       },
       body: jsonEncode({
+        'username': username,
         'name': name,
-        'email': email,
         'phone': phone,
+        'shop_name': businessName,
         'password': password,
       }),
     );
@@ -100,10 +101,10 @@ class Api {
     return data;
   }
 
-  static Future<List<dynamic>> getCustomers() async {
+  static Future<List<dynamic>> getBusinesses() async {
     final token = await getToken();
     final res = await http.get(
-      Uri.parse('$baseUrl/customers'),
+      Uri.parse('$baseUrl/businesses'),
       headers: {
         'Authorization': 'Bearer $token',
         'Accept': 'application/json',
@@ -111,13 +112,61 @@ class Api {
     );
 
     if (res.statusCode != 200) {
-      throw Exception('Fetch customers failed: ${res.body}');
+      throw Exception('Fetch businesses failed: ${res.body}');
     }
 
     return jsonDecode(res.body) as List<dynamic>;
   }
 
+  static Future<Map<String, dynamic>> createBusiness({
+    required String name,
+  }) async {
+    final token = await getToken();
+    final res = await http.post(
+      Uri.parse('$baseUrl/businesses'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'name': name,
+      }),
+    );
+
+    if (res.statusCode != 201) {
+      throw Exception('Create business failed: ${res.body}');
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static Future<List<dynamic>> getCustomers({
+    required int businessId,
+  }) async {
+    final token = await getToken();
+    final res = await http.get(
+      Uri.parse('$baseUrl/customers?business_id=$businessId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+
+    debugPrint('GET /customers?business_id=$businessId');
+    debugPrint('Response: ${res.body}');
+
+    if (res.statusCode != 200) {
+      throw Exception('Fetch customers failed: ${res.body}');
+    }
+
+
+
+
+    return jsonDecode(res.body) as List<dynamic>;
+  }
+
   static Future<Map<String, dynamic>> createCustomer({
+    required int businessId,
     required String name,
     String? phone,
     double openingBalance = 0,
@@ -131,6 +180,7 @@ class Api {
         'Accept': 'application/json',
       },
       body: jsonEncode({
+        'business_id': businessId,
         'name': name,
         'phone': phone,
         'opening_balance': openingBalance,
@@ -144,6 +194,7 @@ class Api {
   }
 
   static Future<Map<String, dynamic>> createTransaction({
+    required int businessId,
     required int customerId,
     required double amount,
     required String type,
@@ -159,6 +210,7 @@ class Api {
         'Accept': 'application/json',
       },
       body: jsonEncode({
+        'business_id': businessId,
         'customer_id': customerId,
         'amount': amount,
         'type': type,
@@ -171,23 +223,6 @@ class Api {
       throw Exception('Create transaction failed: ${res.body}');
     }
     return jsonDecode(res.body) as Map<String, dynamic>;
-  }
-
-  static Future<List<dynamic>> getAllTransactions() async {
-    final token = await getToken();
-    final res = await http.get(
-      Uri.parse('$baseUrl/transactions'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
-
-    if (res.statusCode != 200) {
-      throw Exception('Fetch transactions failed: ${res.body}');
-    }
-
-    return jsonDecode(res.body) as List<dynamic>;
   }
 
   static Future<Map<String, dynamic>> updateTransaction({
@@ -232,5 +267,43 @@ class Api {
     if (res.statusCode != 200) {
       throw Exception('Delete transaction failed: ${res.body}');
     }
+  }
+
+  static Future<List<dynamic>> getAllTransactions({
+    required int businessId,
+  }) async {
+    final token = await getToken();
+    final res = await http.get(
+      Uri.parse('$baseUrl/transactions?business_id=$businessId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+
+    if (res.statusCode != 200) {
+      throw Exception('Fetch transactions failed: ${res.body}');
+    }
+
+    return jsonDecode(res.body) as List<dynamic>;
+  }
+
+  static Future<List<dynamic>> getCustomerTransactions({
+    required int customerId,
+  }) async {
+    final token = await getToken();
+    final res = await http.get(
+      Uri.parse('$baseUrl/customers/$customerId/transactions'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+
+    if (res.statusCode != 200) {
+      throw Exception('Fetch customer transactions failed: ${res.body}');
+    }
+
+    return jsonDecode(res.body) as List<dynamic>;
   }
 }
