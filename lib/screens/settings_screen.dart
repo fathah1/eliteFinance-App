@@ -67,7 +67,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const ListTile(
                   title: Text('Currency'),
-                  subtitle: Text('INR (₹)'),
+                  subtitle: Text('AED'),
                 ),
                 const ListTile(
                   title: Text('App Lock'),

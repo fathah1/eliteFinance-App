@@ -152,8 +152,7 @@ class Api {
       },
     );
 
-    debugPrint('GET /customers?business_id=$businessId');
-    debugPrint('Response: ${res.body}');
+
 
     if (res.statusCode != 200) {
       throw Exception('Fetch customers failed: ${res.body}');
@@ -286,6 +285,167 @@ class Api {
     }
 
     return jsonDecode(res.body) as List<dynamic>;
+  }
+
+  static Future<List<dynamic>> getSuppliers({
+    required int businessId,
+  }) async {
+    final token = await getToken();
+    final res = await http.get(
+      Uri.parse('$baseUrl/suppliers?business_id=$businessId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+
+    if (res.statusCode != 200) {
+      throw Exception('Fetch suppliers failed: ${res.body}');
+    }
+
+    return jsonDecode(res.body) as List<dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> createSupplier({
+    required int businessId,
+    required String name,
+    String? phone,
+    double openingBalance = 0,
+  }) async {
+    final token = await getToken();
+    final res = await http.post(
+      Uri.parse('$baseUrl/suppliers'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'business_id': businessId,
+        'name': name,
+        'phone': phone,
+        'opening_balance': openingBalance,
+      }),
+    );
+
+    if (res.statusCode != 201) {
+      throw Exception('Create supplier failed: ${res.body}');
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static Future<List<dynamic>> getAllSupplierTransactions({
+    required int businessId,
+  }) async {
+    final token = await getToken();
+    final res = await http.get(
+      Uri.parse('$baseUrl/supplier-transactions?business_id=$businessId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+
+    if (res.statusCode != 200) {
+      throw Exception('Fetch supplier transactions failed: ${res.body}');
+    }
+
+    return jsonDecode(res.body) as List<dynamic>;
+  }
+
+  static Future<List<dynamic>> getSupplierTransactions({
+    required int supplierId,
+  }) async {
+    final token = await getToken();
+    final res = await http.get(
+      Uri.parse('$baseUrl/suppliers/$supplierId/transactions'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+
+    if (res.statusCode != 200) {
+      throw Exception('Fetch supplier transactions failed: ${res.body}');
+    }
+
+    return jsonDecode(res.body) as List<dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> createSupplierTransaction({
+    required int businessId,
+    required int supplierId,
+    required double amount,
+    required String type,
+    String? note,
+    String? createdAt,
+  }) async {
+    final token = await getToken();
+    final res = await http.post(
+      Uri.parse('$baseUrl/supplier-transactions'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'business_id': businessId,
+        'supplier_id': supplierId,
+        'amount': amount,
+        'type': type,
+        'note': note,
+        'created_at': createdAt,
+      }),
+    );
+
+    if (res.statusCode != 201) {
+      throw Exception('Create supplier transaction failed: ${res.body}');
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> updateSupplierTransaction({
+    required int transactionId,
+    required double amount,
+    required String type,
+    String? note,
+    String? createdAt,
+  }) async {
+    final token = await getToken();
+    final res = await http.put(
+      Uri.parse('$baseUrl/supplier-transactions/$transactionId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'amount': amount,
+        'type': type,
+        'note': note,
+        'created_at': createdAt,
+      }),
+    );
+
+    if (res.statusCode != 200) {
+      throw Exception('Update supplier transaction failed: ${res.body}');
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static Future<void> deleteSupplierTransaction(int transactionId) async {
+    final token = await getToken();
+    final res = await http.delete(
+      Uri.parse('$baseUrl/supplier-transactions/$transactionId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+
+    if (res.statusCode != 200) {
+      throw Exception('Delete supplier transaction failed: ${res.body}');
+    }
   }
 
   static Future<List<dynamic>> getCustomerTransactions({

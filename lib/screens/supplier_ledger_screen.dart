@@ -3,15 +3,15 @@ import '../api.dart';
 import '../routes.dart';
 import 'entry_detail_screen.dart';
 
-class CustomerLedgerScreen extends StatefulWidget {
-  final Map<String, dynamic> customer;
-  const CustomerLedgerScreen({super.key, required this.customer});
+class SupplierLedgerScreen extends StatefulWidget {
+  final Map<String, dynamic> supplier;
+  const SupplierLedgerScreen({super.key, required this.supplier});
 
   @override
-  State<CustomerLedgerScreen> createState() => _CustomerLedgerScreenState();
+  State<SupplierLedgerScreen> createState() => _SupplierLedgerScreenState();
 }
 
-class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
+class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
   List<Map<String, dynamic>> _transactions = [];
   double _balance = 0;
   bool _loading = true;
@@ -44,11 +44,11 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
       _loading = true;
     });
     try {
-      final tx = await Api.getCustomerTransactions(
-        customerId: widget.customer['id'] as int,
+      final tx = await Api.getSupplierTransactions(
+        supplierId: widget.supplier['id'] as int,
       );
 
-      final opening = _asDouble(widget.customer['opening_balance']);
+      final opening = _asDouble(widget.supplier['opening_balance']);
       final list = tx
           .map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e as Map))
           .toList();
@@ -106,9 +106,9 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
       context,
       AppRoutes.onGenerateRoute(
         RouteSettings(
-          name: AppRoutes.addEntry,
+          name: AppRoutes.addSupplierEntry,
           arguments: {
-            'customerId': widget.customer['id'],
+            'supplierId': widget.supplier['id'],
             'initialType': type,
           },
         ),
@@ -120,7 +120,7 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
   @override
   Widget build(BuildContext context) {
     const brandBlue = Color(0xFF0B4F9E);
-    final name = (widget.customer['name'] ?? '').toString();
+    final name = (widget.supplier['name'] ?? '').toString();
     return Scaffold(
       backgroundColor: const Color(0xFFF3F4F6),
       appBar: AppBar(
@@ -140,17 +140,11 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(name, style: const TextStyle(fontSize: 16)),
-                const Text('Customer', style: TextStyle(fontSize: 12)),
+                const Text('Supplier', style: TextStyle(fontSize: 12)),
               ],
             ),
           ],
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.call),
-            onPressed: () {},
-          ),
-        ],
       ),
       body: Column(
         children: [
@@ -174,7 +168,7 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                       children: [
                         const Text('You will get'),
                         Text(
-                          'AED ${_balance.toStringAsFixed(0)}',
+                          '\u20b9 ${_balance.toStringAsFixed(0)}',
                           style: const TextStyle(
                             color: Colors.red,
                             fontWeight: FontWeight.bold,
@@ -236,10 +230,10 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                                         context,
                                         AppRoutes.onGenerateRoute(
                                           RouteSettings(
-                                            name: AppRoutes.addEntry,
+                                            name: AppRoutes.addSupplierEntry,
                                             arguments: {
-                                              'customerId':
-                                                  widget.customer['id'],
+                                              'supplierId':
+                                                  widget.supplier['id'],
                                               'transaction': t,
                                             },
                                           ),
@@ -247,7 +241,7 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                                       ).then((_) => _load());
                                     },
                                     onDelete: () async {
-                                      await Api.deleteTransaction(
+                                      await Api.deleteSupplierTransaction(
                                           t['id'] as int);
                                       if (!context.mounted) return;
                                       Navigator.pop(context);

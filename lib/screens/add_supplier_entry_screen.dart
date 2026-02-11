@@ -2,22 +2,22 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../api.dart';
 
-class AddEntryScreen extends StatefulWidget {
-  final int customerId;
+class AddSupplierEntryScreen extends StatefulWidget {
+  final int supplierId;
   final Map<String, dynamic>? transaction;
   final String? initialType;
-  const AddEntryScreen({
+  const AddSupplierEntryScreen({
     super.key,
-    required this.customerId,
+    required this.supplierId,
     this.transaction,
     this.initialType,
   });
 
   @override
-  State<AddEntryScreen> createState() => _AddEntryScreenState();
+  State<AddSupplierEntryScreen> createState() => _AddSupplierEntryScreenState();
 }
 
-class _AddEntryScreenState extends State<AddEntryScreen> {
+class _AddSupplierEntryScreenState extends State<AddSupplierEntryScreen> {
   final _amountController = TextEditingController();
   final _noteController = TextEditingController();
   String _type = 'CREDIT';
@@ -65,16 +65,16 @@ class _AddEntryScreenState extends State<AddEntryScreen> {
     final createdAt = _date.toIso8601String();
     try {
       if (widget.transaction == null) {
-        await Api.createTransaction(
+        await Api.createSupplierTransaction(
           businessId: businessId,
-          customerId: widget.customerId,
+          supplierId: widget.supplierId,
           amount: amount,
           type: _type,
           note: _noteController.text.trim(),
           createdAt: createdAt,
         );
       } else {
-        await Api.updateTransaction(
+        await Api.updateSupplierTransaction(
           transactionId: widget.transaction!['id'] as int,
           amount: amount,
           type: _type,
@@ -111,8 +111,8 @@ class _AddEntryScreenState extends State<AddEntryScreen> {
             DropdownButtonFormField<String>(
               value: _type,
               items: const [
-                DropdownMenuItem(value: 'CREDIT', child: Text('Credit (owes you)')),
-                DropdownMenuItem(value: 'DEBIT', child: Text('Debit (you owe)')),
+                DropdownMenuItem(value: 'CREDIT', child: Text('Credit')),
+                DropdownMenuItem(value: 'DEBIT', child: Text('Debit')),
               ],
               onChanged: (v) {
                 if (v == null) return;
