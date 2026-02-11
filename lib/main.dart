@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'routes.dart';
+import 'notifications.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await NotificationService.init();
   runApp(const LedgerApp());
 }
 

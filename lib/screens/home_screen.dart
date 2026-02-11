@@ -1,5 +1,15 @@
+import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:screenshot/screenshot.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../api.dart';
 import '../routes.dart';
 
@@ -117,6 +127,7 @@ class _HomeScreenState extends State<HomeScreen> {
     List<dynamic> transactions,
   ) {
     final totals = <int, Map<String, double>>{};
+    final latest = <int, DateTime>{};
     double creditTotal = 0;
     double debitTotal = 0;
 
@@ -127,6 +138,12 @@ class _HomeScreenState extends State<HomeScreen> {
       totals.putIfAbsent(id, () => {'credit': 0, 'debit': 0});
       final type = (t['type'] ?? '').toString();
       final amount = _asDouble(t['amount']);
+      final raw = (t['created_at'] ?? '').toString();
+      final dt = DateTime.tryParse(raw);
+      if (dt != null) {
+        final prev = latest[id];
+        if (prev == null || dt.isAfter(prev)) latest[id] = dt;
+      }
       if (type == 'CREDIT') {
         totals[id]!['credit'] = totals[id]!['credit']! + amount;
         creditTotal += amount;
@@ -136,6 +153,8 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
 
+    double sumPositive = 0;
+    double sumNegative = 0;
     final enriched = entities.map<Map<String, dynamic>>((c) {
       final map = Map<String, dynamic>.from(c as Map);
       final opening = 0.0;
@@ -143,15 +162,37 @@ class _HomeScreenState extends State<HomeScreen> {
       final credit = totals[id]?['credit'] ?? 0;
       final debit = totals[id]?['debit'] ?? 0;
       final balance = opening + credit - debit;
+      final last = latest[id];
+      if (balance > 0) {
+        sumPositive += balance;
+      } else if (balance < 0) {
+        sumNegative += balance.abs();
+      }
       return {
         ...map,
         'balance': balance,
+        'last_tx': last?.toIso8601String(),
       };
     }).toList();
 
+    enriched.sort((a, b) {
+      final at = a['last_tx'] as String?;
+      final bt = b['last_tx'] as String?;
+      if (at != null && bt != null) {
+        return bt.compareTo(at);
+      }
+      if (at != null) return -1;
+      if (bt != null) return 1;
+      final an = (a['name'] ?? '').toString().toLowerCase();
+      final bn = (b['name'] ?? '').toString().toLowerCase();
+      return an.compareTo(bn);
+    });
+
     _items = enriched;
-    _giveTotal = debitTotal;
-    _getTotal = creditTotal;
+    // Sum of red (positive) balances = you will get
+    // Sum of green (negative) balances = you will give
+    _getTotal = sumPositive;
+    _giveTotal = sumNegative;
   }
 
   void _applyFilter() {
@@ -170,12 +211,274 @@ class _HomeScreenState extends State<HomeScreen> {
   Color _balanceColor(double balance) {
     if (balance > 0) return Colors.red;
     if (balance < 0) return Colors.green;
-    return Colors.grey;
+    return Colors.black;
   }
 
   String _balanceLabel(double balance) {
-    final value = balance.abs().toStringAsFixed(2);
-    return balance == 0 ? '0.00' : (balance > 0 ? '+$value' : '-$value');
+    final value = balance.abs().toStringAsFixed(0);
+    return balance == 0 ? '0' : 'AED $value';
+  }
+
+  String _timeAgo(String? iso) {
+    if (iso == null || iso.isEmpty) return '';
+    final dt = DateTime.tryParse(iso);
+    if (dt == null) return '';
+    final diff = DateTime.now().difference(dt);
+    if (diff.inSeconds < 60) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes} min ago';
+    if (diff.inHours < 24) return '${diff.inHours} hr ago';
+    if (diff.inDays < 7) return '${diff.inDays} days ago';
+    final weeks = (diff.inDays / 7).floor();
+    if (weeks < 4) return '${weeks} weeks ago';
+    final months = (diff.inDays / 30).floor();
+    if (months < 12) return '${months} months ago';
+    final years = (diff.inDays / 365).floor();
+    return '${years} years ago';
+  }
+
+  String _paymentMessage(String name, String? phone, double amount) {
+    final safePhone = (phone ?? '').trim();
+    final amountLabel = amount.abs().toStringAsFixed(0);
+    final contact = safePhone.isEmpty ? name : '$name ($safePhone)';
+    return '$contact has requested a payment of AED $amountLabel.';
+  }
+
+  Widget _buildRequestCard(
+    String name,
+    String? phone,
+    double amount,
+  ) {
+    final time = DateFormat('hh:mm a dd MMM yyyy').format(DateTime.now());
+    final amountLabel = amount.abs().toStringAsFixed(0);
+    const appName = 'app';
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        width: 320,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x33000000),
+              blurRadius: 12,
+              offset: Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircleAvatar(
+              radius: 22,
+              backgroundColor: const Color(0xFFE9EEF9),
+              child: Text(
+                name.trim().isEmpty
+                    ? 'C'
+                    : name.trim().toUpperCase().substring(0, 1),
+                style: const TextStyle(
+                  color: Color(0xFF0B4F9E),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              name.isEmpty ? 'Customer' : name,
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            if (phone != null && phone.trim().isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  phone,
+                  style: const TextStyle(color: Colors.black54),
+                ),
+              ),
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            const SizedBox(height: 12),
+            Text(
+              'Requested at $time',
+              style: const TextStyle(color: Colors.black54),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'AED $amountLabel',
+              style: const TextStyle(
+                fontSize: 26,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            const SizedBox(height: 10),
+            const Text(
+              appName,
+              style: TextStyle(
+                color: Color(0xFFB0182E),
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _shareOnWhatsApp(
+    String name,
+    String? phone,
+    double amount,
+  ) async {
+    final user = await Api.getUser();
+    final userName = (user?['username'] ?? 'User').toString();
+    final userPhone =
+        user?['phone'] == null ? null : (user?['phone'] ?? '').toString();
+    final controller = ScreenshotController();
+    final mediaQuery = MediaQueryData(
+      size: const Size(360, 640),
+      devicePixelRatio: 2.0,
+      textScaler: TextScaler.linear(1),
+    );
+    final widget = MediaQuery(
+      data: mediaQuery,
+      child: Directionality(
+        textDirection: ui.TextDirection.ltr,
+        child: Container(
+          color: Colors.white,
+          width: double.infinity,
+          height: double.infinity,
+          alignment: Alignment.center,
+          padding: const EdgeInsets.all(24),
+          child: _buildRequestCard(userName, userPhone, amount),
+        ),
+      ),
+    );
+    final Uint8List imageBytes = await controller.captureFromWidget(
+      widget,
+      pixelRatio: 2.0,
+    );
+    final dir = await getTemporaryDirectory();
+    final file = File('${dir.path}/payment_request_${DateTime.now().millisecondsSinceEpoch}.png');
+    await file.writeAsBytes(imageBytes);
+    final message = _paymentMessage(userName, userPhone, amount);
+    await Share.shareXFiles([XFile(file.path)], text: message);
+  }
+
+  Future<void> _sendSms(
+    String name,
+    String? phone,
+    double amount,
+  ) async {
+    final user = await Api.getUser();
+    final userName = (user?['username'] ?? 'User').toString();
+    final userPhone =
+        user?['phone'] == null ? '' : (user?['phone'] ?? '').toString();
+    final number = userPhone.trim();
+    if (number.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No phone number found.')),
+      );
+      return;
+    }
+    final message =
+        Uri.encodeComponent(_paymentMessage(userName, userPhone, amount));
+    final uri = Uri.parse('sms:$number?body=$message');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
+    }
+  }
+
+  void _showRemindSheet(
+    String name,
+    String? phone,
+    double amount,
+  ) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: false,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) {
+        final amountLabel = amount.abs().toStringAsFixed(0);
+        final viewPadding = MediaQuery.of(context).viewPadding;
+        final bottomInset =
+            viewPadding.bottom > 0 ? viewPadding.bottom : 8.0;
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(16, 12, 16, 20 + bottomInset),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Request ${name.isEmpty ? 'customer' : name} to pay you',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'AED $amountLabel',
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () => _sendSms(name, phone, amount),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF0B4F9E),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        icon: const Icon(Icons.sms),
+                        label: const Text('SMS'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () => _shareOnWhatsApp(name, phone, amount),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF1DAA61),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        icon: const FaIcon(FontAwesomeIcons.whatsapp),
+                        label: const Text('WHATSAPP'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _openBusinesses() async {
@@ -231,7 +534,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     const brandBlue = Color(0xFF0B4F9E);
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
+      backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: brandBlue,
         foregroundColor: Colors.white,
@@ -312,7 +615,8 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
-          Padding(
+          Container(
+            color: brandBlue,
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
             child: Card(
               elevation: 0,
@@ -332,13 +636,15 @@ class _HomeScreenState extends State<HomeScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text('You will give'),
+                              const Text('You will give',
+                                  style: TextStyle(color: Colors.black)),
                               const SizedBox(height: 6),
                               Text(
                                 'AED ${_giveTotal.toStringAsFixed(0)}',
                                 style: const TextStyle(
                                   fontSize: 20,
                                   fontWeight: FontWeight.bold,
+                                  color: Colors.green,
                                 ),
                               ),
                             ],
@@ -353,7 +659,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
-                              const Text('You will get'),
+                              const Text('You will get',
+                                  style: TextStyle(color: Colors.black)),
                               const SizedBox(height: 6),
                               Text(
                                 'AED ${_getTotal.toStringAsFixed(0)}',
@@ -402,18 +709,19 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
             child: Row(
               children: [
                 Expanded(
                   child: TextField(
                     decoration: InputDecoration(
                       hintText: _tab == 'customers'
-                          ? 'Search Customer'
-                          : 'Search Supplier',
+                          ? 'Search customer'
+                          : 'Search supplier',
                       prefixIcon: const Icon(Icons.search),
                       filled: true,
-                      fillColor: Colors.white,
+                      fillColor: const Color(0xFFF5F6FA),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 12),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                         borderSide: BorderSide.none,
@@ -429,15 +737,15 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(width: 10),
                 Container(
-                  width: 46,
-                  height: 46,
+                  width: 44,
+                  height: 44,
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: const Color(0xFFF5F6FA),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: IconButton(
                     onPressed: () {},
-                    icon: const Icon(Icons.filter_list),
+                    icon: const Icon(Icons.tune),
                   ),
                 ),
               ],
@@ -452,6 +760,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     : _filtered.isEmpty
                         ? const Center(child: Text('No entries yet.'))
                         : ListView.separated(
+                            padding: const EdgeInsets.only(bottom: 120),
                             itemCount: _filtered.length,
                             separatorBuilder: (_, __) =>
                                 const Divider(height: 1),
@@ -459,25 +768,65 @@ class _HomeScreenState extends State<HomeScreen> {
                               final c = _filtered[index];
                               final balance = _asDouble(c['balance']);
                               return ListTile(
+                                dense: true,
+                                contentPadding:
+                                    const EdgeInsets.symmetric(horizontal: 12),
                                 leading: CircleAvatar(
-                                  backgroundColor: Colors.grey.shade200,
+                                  radius: 18,
+                                  backgroundColor: const Color(0xFFE9EEF9),
                                   child: Text(
                                     (c['name'] ?? 'A')
                                         .toString()
                                         .trim()
                                         .toUpperCase()
                                         .substring(0, 1),
-                                    style: const TextStyle(color: Colors.black),
+                                    style: const TextStyle(
+                                      color: Color(0xFF0B4F9E),
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
                                 title: Text((c['name'] ?? '').toString()),
-                                subtitle: Text((c['phone'] ?? '').toString()),
-                                trailing: Text(
-                                  _balanceLabel(balance),
-                                  style: TextStyle(
-                                    color: _balanceColor(balance),
-                                    fontWeight: FontWeight.bold,
-                                  ),
+                                subtitle: Text(
+                                  _timeAgo(c['last_tx'] as String?) != ''
+                                      ? _timeAgo(c['last_tx'] as String?)
+                                      : (c['phone'] ?? '').toString(),
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                                trailing: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      _balanceLabel(balance),
+                                      style: TextStyle(
+                                        color: _balanceColor(balance),
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 18,
+                                      ),
+                                    ),
+                                    if (balance > 0)
+                                      TextButton(
+                                        onPressed: () {
+                                          final name =
+                                              (c['name'] ?? '').toString();
+                                          final phone = c['phone'] == null
+                                              ? null
+                                              : (c['phone'] ?? '').toString();
+                                          _showRemindSheet(name, phone, balance);
+                                        },
+                                        style: TextButton.styleFrom(
+                                          padding: EdgeInsets.zero,
+                                          minimumSize: const Size(0, 20),
+                                          tapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                        ),
+                                        child: const Text(
+                                          'REMIND',
+                                          style: TextStyle(fontSize: 11),
+                                        ),
+                                      ),
+                                  ],
                                 ),
                                 onTap: () {
                                   Navigator.push(
