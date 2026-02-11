@@ -48,7 +48,7 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
         customerId: widget.customer['id'] as int,
       );
 
-      final opening = _asDouble(widget.customer['opening_balance']);
+      final opening = 0.0;
       final list = tx
           .map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e as Map))
           .toList();
@@ -121,6 +121,16 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
   Widget build(BuildContext context) {
     const brandBlue = Color(0xFF0B4F9E);
     final name = (widget.customer['name'] ?? '').toString();
+    final absBalance = _balance.abs().toStringAsFixed(0);
+    final isSettled = _balance == 0;
+    final isPositive = _balance > 0;
+    final balanceLabel = isSettled
+        ? 'Settled up'
+        : isPositive
+            ? 'You gave'
+            : 'You got';
+    final balanceColor =
+        isSettled ? Colors.black : (isPositive ? Colors.red : Colors.green);
     return Scaffold(
       backgroundColor: const Color(0xFFF3F4F6),
       appBar: AppBar(
@@ -172,11 +182,11 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text('You will get'),
+                        Text(balanceLabel),
                         Text(
-                          'AED ${_balance.toStringAsFixed(0)}',
-                          style: const TextStyle(
-                            color: Colors.red,
+                          isSettled ? '0' : 'AED $absBalance',
+                          style: TextStyle(
+                            color: balanceColor,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -221,8 +231,12 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                           final amount = _asDouble(t['amount']);
                           final type = (t['type'] ?? '').toString();
                           final running = _asDouble(t['running_balance']);
-                          return InkWell(
-                            onTap: () {
+                              return InkWell(
+                                onTap: () {
+                              final attachment = (t['attachment_path'] ?? '').toString();
+                              final attachmentUrl = attachment.isNotEmpty
+                                  ? 'https://eliteposs.com/financeserver/public/storage/$attachment'
+                                  : '';
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
@@ -230,6 +244,7 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                                     title: name,
                                     entry: t,
                                     runningBalance: running,
+                                    attachmentUrl: attachmentUrl,
                                     onEdit: () {
                                       Navigator.pop(context);
                                       Navigator.push(
@@ -314,6 +329,11 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                                       ),
                                     ),
                                   ),
+                                  if ((t['attachment_path'] ?? '').toString().isNotEmpty)
+                                    const Padding(
+                                      padding: EdgeInsets.only(right: 8),
+                                      child: Icon(Icons.attachment, size: 16),
+                                    ),
                                 ],
                               ),
                             ),
@@ -321,35 +341,38 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                         },
                       ),
           ),
-          Container(
-            color: Colors.white,
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => _openAdd('CREDIT'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+          SafeArea(
+            top: false,
+            child: Container(
+              color: Colors.white,
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => _openAdd('CREDIT'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: const Text('YOU GAVE AED'),
                     ),
-                    child: const Text('YOU GAVE AED'),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => _openAdd('DEBIT'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => _openAdd('DEBIT'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: const Text('YOU GOT AED'),
                     ),
-                    child: const Text('YOU GOT AED'),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ],

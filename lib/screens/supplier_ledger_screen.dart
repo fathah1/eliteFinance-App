@@ -48,7 +48,7 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
         supplierId: widget.supplier['id'] as int,
       );
 
-      final opening = _asDouble(widget.supplier['opening_balance']);
+      final opening = 0.0;
       final list = tx
           .map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e as Map))
           .toList();
@@ -121,6 +121,16 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
   Widget build(BuildContext context) {
     const brandBlue = Color(0xFF0B4F9E);
     final name = (widget.supplier['name'] ?? '').toString();
+    final absBalance = _balance.abs().toStringAsFixed(0);
+    final isSettled = _balance == 0;
+    final isPositive = _balance > 0;
+    final balanceLabel = isSettled
+        ? 'Settled up'
+        : isPositive
+            ? 'You gave'
+            : 'You got';
+    final balanceColor =
+        isSettled ? Colors.black : (isPositive ? Colors.red : Colors.green);
     return Scaffold(
       backgroundColor: const Color(0xFFF3F4F6),
       appBar: AppBar(
@@ -166,11 +176,11 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text('You will get'),
+                        Text(balanceLabel),
                         Text(
-                          '\u20b9 ${_balance.toStringAsFixed(0)}',
-                          style: const TextStyle(
-                            color: Colors.red,
+                          isSettled ? '0' : 'AED $absBalance',
+                          style: TextStyle(
+                            color: balanceColor,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -217,6 +227,10 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
                           final running = _asDouble(t['running_balance']);
                           return InkWell(
                             onTap: () {
+                              final attachment = (t['attachment_path'] ?? '').toString();
+                              final attachmentUrl = attachment.isNotEmpty
+                                  ? 'https://eliteposs.com/financeserver/public/storage/$attachment'
+                                  : '';
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
@@ -224,6 +238,7 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
                                     title: name,
                                     entry: t,
                                     runningBalance: running,
+                                    attachmentUrl: attachmentUrl,
                                     onEdit: () {
                                       Navigator.pop(context);
                                       Navigator.push(
@@ -308,6 +323,11 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
                                       ),
                                     ),
                                   ),
+                                  if ((t['attachment_path'] ?? '').toString().isNotEmpty)
+                                    const Padding(
+                                      padding: EdgeInsets.only(right: 8),
+                                      child: Icon(Icons.attachment, size: 16),
+                                    ),
                                 ],
                               ),
                             ),
@@ -315,35 +335,38 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
                         },
                       ),
           ),
-          Container(
-            color: Colors.white,
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => _openAdd('CREDIT'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+          SafeArea(
+            top: false,
+            child: Container(
+              color: Colors.white,
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => _openAdd('CREDIT'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: const Text('YOU GAVE AED'),
                     ),
-                    child: const Text('YOU GAVE AED'),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => _openAdd('DEBIT'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => _openAdd('DEBIT'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: const Text('YOU GOT AED'),
                     ),
-                    child: const Text('YOU GOT AED'),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ],

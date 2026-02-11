@@ -138,7 +138,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final enriched = entities.map<Map<String, dynamic>>((c) {
       final map = Map<String, dynamic>.from(c as Map);
-      final opening = _asDouble(map['opening_balance']);
+      final opening = 0.0;
       final id = map['id'] as int;
       final credit = totals[id]?['credit'] ?? 0;
       final debit = totals[id]?['debit'] ?? 0;
@@ -277,6 +277,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: const Color(0xFFA0004A),
+        foregroundColor: Colors.white,
         onPressed: _activeBusinessServerId == null
             ? null
             : () async {
@@ -284,19 +285,18 @@ class _HomeScreenState extends State<HomeScreen> {
                   context,
                   AppRoutes.onGenerateRoute(
                     RouteSettings(
-                      name: _tab == 'customers'
-                          ? AppRoutes.addCustomer
-                          : AppRoutes.addSupplier,
+                      name: AppRoutes.contactsImport,
+                      arguments: {
+                        'mode':
+                            _tab == 'customers' ? 'customers' : 'suppliers',
+                      },
                     ),
                   ),
                 );
                 _loadData();
               },
-        icon: const Icon(Icons.person_add),
+        icon: const Icon(Icons.person_add, color: Colors.white),
         label: Text(
-          style: TextStyle(
-            color: Color(0xFFFFFFFF),
-          ),
           _tab == 'customers' ? 'ADD CUSTOMER' : 'ADD SUPPLIER',
         ),
       ),

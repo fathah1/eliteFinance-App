@@ -6,6 +6,7 @@ class EntryDetailScreen extends StatelessWidget {
   final double runningBalance;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+  final String? attachmentUrl;
 
   const EntryDetailScreen({
     super.key,
@@ -14,6 +15,7 @@ class EntryDetailScreen extends StatelessWidget {
     required this.runningBalance,
     required this.onEdit,
     required this.onDelete,
+    this.attachmentUrl,
   });
 
   double _asDouble(dynamic v) {
@@ -51,6 +53,19 @@ class EntryDetailScreen extends StatelessWidget {
         padding: const EdgeInsets.all(12),
         child: Column(
           children: [
+            if (attachmentUrl != null && attachmentUrl!.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.network(
+                    attachmentUrl!,
+                    fit: BoxFit.cover,
+                    height: 160,
+                    width: double.infinity,
+                  ),
+                ),
+              ),
             Card(
               elevation: 0,
               shape: RoundedRectangleBorder(

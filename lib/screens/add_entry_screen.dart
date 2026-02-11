@@ -1,4 +1,6 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../api.dart';
 
@@ -23,6 +25,7 @@ class _AddEntryScreenState extends State<AddEntryScreen> {
   String _type = 'CREDIT';
   DateTime _date = DateTime.now();
   String? _error;
+  File? _attachment;
 
   @override
   void initState() {
@@ -38,6 +41,15 @@ class _AddEntryScreenState extends State<AddEntryScreen> {
     } else if (widget.initialType != null) {
       _type = widget.initialType!;
     }
+  }
+
+  Future<void> _pickImage() async {
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(source: ImageSource.gallery);
+    if (picked == null) return;
+    setState(() {
+      _attachment = File(picked.path);
+    });
   }
 
   Future<int?> _getActiveBusinessServerId() async {
@@ -72,6 +84,7 @@ class _AddEntryScreenState extends State<AddEntryScreen> {
           type: _type,
           note: _noteController.text.trim(),
           createdAt: createdAt,
+          attachmentPath: _attachment?.path,
         );
       } else {
         await Api.updateTransaction(
@@ -80,6 +93,7 @@ class _AddEntryScreenState extends State<AddEntryScreen> {
           type: _type,
           note: _noteController.text.trim(),
           createdAt: createdAt,
+          attachmentPath: _attachment?.path,
         );
       }
     } catch (e) {
@@ -108,24 +122,35 @@ class _AddEntryScreenState extends State<AddEntryScreen> {
               keyboardType: TextInputType.number,
             ),
             const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              value: _type,
-              items: const [
-                DropdownMenuItem(value: 'CREDIT', child: Text('Credit (owes you)')),
-                DropdownMenuItem(value: 'DEBIT', child: Text('Debit (you owe)')),
-              ],
-              onChanged: (v) {
-                if (v == null) return;
-                setState(() {
-                  _type = v;
-                });
-              },
-              decoration: const InputDecoration(labelText: 'Type'),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                _type == 'CREDIT' ? 'Type: You gave' : 'Type: You got',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _noteController,
               decoration: const InputDecoration(labelText: 'Note (optional)'),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                ElevatedButton.icon(
+                  onPressed: _pickImage,
+                  icon: const Icon(Icons.attach_file),
+                  label: const Text('Attach bill'),
+                ),
+                const SizedBox(width: 12),
+                if (_attachment != null)
+                  Expanded(
+                    child: Text(
+                      _attachment!.path.split('/').last,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(height: 12),
             Row(

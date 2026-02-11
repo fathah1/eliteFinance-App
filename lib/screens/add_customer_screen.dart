@@ -3,7 +3,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../api.dart';
 
 class AddCustomerScreen extends StatefulWidget {
-  const AddCustomerScreen({super.key});
+  final String? initialName;
+  final String? initialPhone;
+  const AddCustomerScreen({super.key, this.initialName, this.initialPhone});
 
   @override
   State<AddCustomerScreen> createState() => _AddCustomerScreenState();
@@ -12,9 +14,19 @@ class AddCustomerScreen extends StatefulWidget {
 class _AddCustomerScreenState extends State<AddCustomerScreen> {
   final _nameController = TextEditingController();
   final _phoneController = TextEditingController();
-  final _openingController = TextEditingController();
   String? _error;
   bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialName != null) {
+      _nameController.text = widget.initialName!;
+    }
+    if (widget.initialPhone != null) {
+      _phoneController.text = widget.initialPhone!;
+    }
+  }
 
   Future<int?> _getActiveBusinessServerId() async {
     final prefs = await SharedPreferences.getInstance();
@@ -42,7 +54,6 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
       _error = null;
     });
 
-    final opening = double.tryParse(_openingController.text.trim()) ?? 0;
     try {
       await Api.createCustomer(
         businessId: businessId,
@@ -50,7 +61,6 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
         phone: _phoneController.text.trim().isEmpty
             ? null
             : _phoneController.text.trim(),
-        openingBalance: opening,
       );
     } catch (e) {
       setState(() {
@@ -61,7 +71,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
     }
 
     if (!mounted) return;
-    Navigator.pop(context);
+    Navigator.pop(context, true);
   }
 
   @override
@@ -80,12 +90,6 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
               controller: _phoneController,
               decoration: const InputDecoration(labelText: 'Phone (optional)'),
               keyboardType: TextInputType.phone,
-            ),
-            TextField(
-              controller: _openingController,
-              decoration:
-                  const InputDecoration(labelText: 'Opening balance (optional)'),
-              keyboardType: TextInputType.number,
             ),
             const SizedBox(height: 16),
             if (_error != null)

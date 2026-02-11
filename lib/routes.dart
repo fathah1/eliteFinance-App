@@ -3,7 +3,9 @@ import 'screens/add_customer_screen.dart';
 import 'screens/add_entry_screen.dart';
 import 'screens/add_supplier_entry_screen.dart';
 import 'screens/add_supplier_screen.dart';
+import 'screens/contacts_import_screen.dart';
 import 'screens/business_switch_screen.dart';
+import 'screens/main_shell.dart';
 import 'screens/customer_ledger_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
@@ -27,6 +29,7 @@ class AppRoutes {
   static const addSupplier = '/suppliers/add';
   static const supplierLedger = '/suppliers/ledger';
   static const addSupplierEntry = '/suppliers/entries/add';
+  static const contactsImport = '/contacts/import';
 
   static Route<dynamic> onGenerateRoute(RouteSettings routeSettings) {
     switch (routeSettings.name) {
@@ -37,9 +40,16 @@ class AppRoutes {
       case register:
         return MaterialPageRoute(builder: (_) => const RegisterScreen());
       case home:
-        return MaterialPageRoute(builder: (_) => const HomeScreen());
+        return MaterialPageRoute(builder: (_) => const MainShell());
       case addCustomer:
-        return MaterialPageRoute(builder: (_) => const AddCustomerScreen());
+        final args =
+            (routeSettings.arguments ?? const {}) as Map<String, dynamic>;
+        return MaterialPageRoute(
+          builder: (_) => AddCustomerScreen(
+            initialName: args['name'] as String?,
+            initialPhone: args['phone'] as String?,
+          ),
+        );
       case customerLedger:
         final args = routeSettings.arguments as Map<String, dynamic>;
         return MaterialPageRoute(
@@ -61,7 +71,14 @@ class AppRoutes {
       case businesses:
         return MaterialPageRoute(builder: (_) => const BusinessSwitchScreen());
       case addSupplier:
-        return MaterialPageRoute(builder: (_) => const AddSupplierScreen());
+        final args =
+            (routeSettings.arguments ?? const {}) as Map<String, dynamic>;
+        return MaterialPageRoute(
+          builder: (_) => AddSupplierScreen(
+            initialName: args['name'] as String?,
+            initialPhone: args['phone'] as String?,
+          ),
+        );
       case supplierLedger:
         final args = routeSettings.arguments as Map<String, dynamic>;
         return MaterialPageRoute(
@@ -74,6 +91,13 @@ class AppRoutes {
             supplierId: args['supplierId'] as int,
             transaction: args['transaction'] as Map<String, dynamic>?,
             initialType: args['initialType'] as String?,
+          ),
+        );
+      case contactsImport:
+        final args = routeSettings.arguments as Map<String, dynamic>;
+        return MaterialPageRoute(
+          builder: (_) => ContactsImportScreen(
+            mode: args['mode'] as String,
           ),
         );
       default:

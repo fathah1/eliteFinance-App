@@ -168,7 +168,6 @@ class Api {
     required int businessId,
     required String name,
     String? phone,
-    double openingBalance = 0,
   }) async {
     final token = await getToken();
     final res = await http.post(
@@ -182,7 +181,6 @@ class Api {
         'business_id': businessId,
         'name': name,
         'phone': phone,
-        'opening_balance': openingBalance,
       }),
     );
 
@@ -199,29 +197,31 @@ class Api {
     required String type,
     String? note,
     String? createdAt,
+    String? attachmentPath,
   }) async {
     final token = await getToken();
-    final res = await http.post(
-      Uri.parse('$baseUrl/transactions'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: jsonEncode({
-        'business_id': businessId,
-        'customer_id': customerId,
-        'amount': amount,
-        'type': type,
-        'note': note,
-        'created_at': createdAt,
-      }),
-    );
-
-    if (res.statusCode != 201) {
-      throw Exception('Create transaction failed: ${res.body}');
+    final uri = Uri.parse('$baseUrl/transactions');
+    final req = http.MultipartRequest('POST', uri);
+    req.headers['Authorization'] = 'Bearer $token';
+    req.headers['Accept'] = 'application/json';
+    req.fields['business_id'] = businessId.toString();
+    req.fields['customer_id'] = customerId.toString();
+    req.fields['amount'] = amount.toString();
+    req.fields['type'] = type;
+    if (note != null) req.fields['note'] = note;
+    if (createdAt != null) req.fields['created_at'] = createdAt;
+    if (attachmentPath != null) {
+      req.files.add(await http.MultipartFile.fromPath(
+        'attachment',
+        attachmentPath,
+      ));
     }
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    final res = await req.send();
+    final body = await res.stream.bytesToString();
+    if (res.statusCode != 201) {
+      throw Exception('Create transaction failed: $body');
+    }
+    return jsonDecode(body) as Map<String, dynamic>;
   }
 
   static Future<Map<String, dynamic>> updateTransaction({
@@ -230,27 +230,30 @@ class Api {
     required String type,
     String? note,
     String? createdAt,
+    String? attachmentPath,
   }) async {
     final token = await getToken();
-    final res = await http.put(
-      Uri.parse('$baseUrl/transactions/$transactionId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: jsonEncode({
-        'amount': amount,
-        'type': type,
-        'note': note,
-        'created_at': createdAt,
-      }),
-    );
-
-    if (res.statusCode != 200) {
-      throw Exception('Update transaction failed: ${res.body}');
+    final uri = Uri.parse('$baseUrl/transactions/$transactionId');
+    final req = http.MultipartRequest('POST', uri);
+    req.headers['Authorization'] = 'Bearer $token';
+    req.headers['Accept'] = 'application/json';
+    req.fields['_method'] = 'PUT';
+    req.fields['amount'] = amount.toString();
+    req.fields['type'] = type;
+    if (note != null) req.fields['note'] = note;
+    if (createdAt != null) req.fields['created_at'] = createdAt;
+    if (attachmentPath != null) {
+      req.files.add(await http.MultipartFile.fromPath(
+        'attachment',
+        attachmentPath,
+      ));
     }
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    final res = await req.send();
+    final body = await res.stream.bytesToString();
+    if (res.statusCode != 200) {
+      throw Exception('Update transaction failed: $body');
+    }
+    return jsonDecode(body) as Map<String, dynamic>;
   }
 
   static Future<void> deleteTransaction(int transactionId) async {
@@ -310,7 +313,6 @@ class Api {
     required int businessId,
     required String name,
     String? phone,
-    double openingBalance = 0,
   }) async {
     final token = await getToken();
     final res = await http.post(
@@ -324,7 +326,6 @@ class Api {
         'business_id': businessId,
         'name': name,
         'phone': phone,
-        'opening_balance': openingBalance,
       }),
     );
 
@@ -379,29 +380,31 @@ class Api {
     required String type,
     String? note,
     String? createdAt,
+    String? attachmentPath,
   }) async {
     final token = await getToken();
-    final res = await http.post(
-      Uri.parse('$baseUrl/supplier-transactions'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: jsonEncode({
-        'business_id': businessId,
-        'supplier_id': supplierId,
-        'amount': amount,
-        'type': type,
-        'note': note,
-        'created_at': createdAt,
-      }),
-    );
-
-    if (res.statusCode != 201) {
-      throw Exception('Create supplier transaction failed: ${res.body}');
+    final uri = Uri.parse('$baseUrl/supplier-transactions');
+    final req = http.MultipartRequest('POST', uri);
+    req.headers['Authorization'] = 'Bearer $token';
+    req.headers['Accept'] = 'application/json';
+    req.fields['business_id'] = businessId.toString();
+    req.fields['supplier_id'] = supplierId.toString();
+    req.fields['amount'] = amount.toString();
+    req.fields['type'] = type;
+    if (note != null) req.fields['note'] = note;
+    if (createdAt != null) req.fields['created_at'] = createdAt;
+    if (attachmentPath != null) {
+      req.files.add(await http.MultipartFile.fromPath(
+        'attachment',
+        attachmentPath,
+      ));
     }
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    final res = await req.send();
+    final body = await res.stream.bytesToString();
+    if (res.statusCode != 201) {
+      throw Exception('Create supplier transaction failed: $body');
+    }
+    return jsonDecode(body) as Map<String, dynamic>;
   }
 
   static Future<Map<String, dynamic>> updateSupplierTransaction({
@@ -410,27 +413,30 @@ class Api {
     required String type,
     String? note,
     String? createdAt,
+    String? attachmentPath,
   }) async {
     final token = await getToken();
-    final res = await http.put(
-      Uri.parse('$baseUrl/supplier-transactions/$transactionId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: jsonEncode({
-        'amount': amount,
-        'type': type,
-        'note': note,
-        'created_at': createdAt,
-      }),
-    );
-
-    if (res.statusCode != 200) {
-      throw Exception('Update supplier transaction failed: ${res.body}');
+    final uri = Uri.parse('$baseUrl/supplier-transactions/$transactionId');
+    final req = http.MultipartRequest('POST', uri);
+    req.headers['Authorization'] = 'Bearer $token';
+    req.headers['Accept'] = 'application/json';
+    req.fields['_method'] = 'PUT';
+    req.fields['amount'] = amount.toString();
+    req.fields['type'] = type;
+    if (note != null) req.fields['note'] = note;
+    if (createdAt != null) req.fields['created_at'] = createdAt;
+    if (attachmentPath != null) {
+      req.files.add(await http.MultipartFile.fromPath(
+        'attachment',
+        attachmentPath,
+      ));
     }
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    final res = await req.send();
+    final body = await res.stream.bytesToString();
+    if (res.statusCode != 200) {
+      throw Exception('Update supplier transaction failed: $body');
+    }
+    return jsonDecode(body) as Map<String, dynamic>;
   }
 
   static Future<void> deleteSupplierTransaction(int transactionId) async {
