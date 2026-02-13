@@ -71,7 +71,7 @@ class _AddSaleBillScreenState extends State<AddSaleBillScreen> {
   int? _partyId;
   String? _partyName;
   String? _partyPhone;
-  String _paymentMode = 'unpaid';
+  String _paymentMode = '';
   DateTime? _dueDate;
   List<_BillLineItem> _lineItems = [];
   final List<_AdditionalCharge> _additionalCharges = [];
@@ -131,6 +131,10 @@ class _AddSaleBillScreenState extends State<AddSaleBillScreen> {
     final due = _saleBillAmount - _receivedAmount;
     return due > 0 ? due : 0;
   }
+
+  bool get _canGenerateBill =>
+      _saleBillAmount > 0 &&
+      (_paymentMode == 'unpaid' || _paymentMode == 'cash' || _paymentMode == 'card');
 
   Future<void> _pickDate() async {
     final picked = await showDatePicker(
@@ -603,6 +607,13 @@ class _AddSaleBillScreenState extends State<AddSaleBillScreen> {
   }
 
   Future<void> _save() async {
+    if (_paymentMode.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Select payment method')),
+      );
+      return;
+    }
+
     if (_saleBillAmount <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Enter amount or add items')),
@@ -669,7 +680,7 @@ class _AddSaleBillScreenState extends State<AddSaleBillScreen> {
           _partyId = null;
           _partyName = null;
           _partyPhone = null;
-          _paymentMode = 'unpaid';
+          _paymentMode = '';
           _dueDate = null;
           _lineItems = [];
           _additionalCharges.clear();
@@ -1282,10 +1293,14 @@ class _AddSaleBillScreenState extends State<AddSaleBillScreen> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: ElevatedButton(
-              onPressed: _saleBillAmount > 0 ? _save : null,
+              onPressed: _canGenerateBill ? _save : null,
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF96B8E4),
+                backgroundColor: _canGenerateBill
+                    ? const Color(0xFF0B4F9E)
+                    : const Color(0xFF96B8E4),
+                disabledBackgroundColor: const Color(0xFF96B8E4),
                 foregroundColor: Colors.white,
+                disabledForegroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12)),

@@ -222,16 +222,6 @@ class _BillsScreenState extends State<BillsScreen> {
                   ],
                 ),
               ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text('Start Creating GST Bills',
-                        style: TextStyle(fontSize: 18 / 1.2)),
-                  ),
-                  Switch(value: false, onChanged: (_) {}),
-                ],
-              ),
             ],
           ),
         );
@@ -263,11 +253,6 @@ class _BillsScreenState extends State<BillsScreen> {
                             fontSize: 32 / 2)),
                     const SizedBox(width: 4),
                     const Icon(Icons.keyboard_arrow_down, color: Colors.white),
-                    const Spacer(),
-                    const Icon(Icons.settings_outlined, color: Colors.white),
-                    const SizedBox(width: 6),
-                    const Text('Settings',
-                        style: TextStyle(color: Colors.white)),
                   ],
                 ),
                 const SizedBox(height: 14),
