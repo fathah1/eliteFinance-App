@@ -49,5 +49,11 @@
 	<true/>
 	<key>NSContactsUsageDescription</key>
 	<string>We need access to your contacts to import customers and suppliers.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Bluetooth access is needed to print invoices on thermal printers.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Bluetooth access is needed to print invoices on thermal printers.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Photo library access is needed to attach invoice notes and photos.</string>
 </dict>
 </plist>

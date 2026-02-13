@@ -654,15 +654,13 @@ class _ItemsScreenState extends State<ItemsScreen> {
                       final item = _filtered[index];
                       return InkWell(
                         onTap: () async {
-                          final changed = await Navigator.push(
+                          await Navigator.push(
                             context,
                             MaterialPageRoute(
                               builder: (_) => ItemDetailScreen(item: item),
                             ),
                           );
-                          if (changed == true) {
-                            await _loadItems();
-                          }
+                          await _loadItems();
                         },
                         child: Card(
                         elevation: 0,

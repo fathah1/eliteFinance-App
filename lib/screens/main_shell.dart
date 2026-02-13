@@ -27,6 +27,11 @@ class _MainShellState extends State<MainShell> {
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _index,
         onTap: (i) => setState(() => _index = i),
+        type: BottomNavigationBarType.fixed,
+        selectedItemColor: const Color(0xFF0B4F9E),
+        unselectedItemColor: const Color(0xFF6C7A96),
+        selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600),
+        backgroundColor: Colors.white,
         items: const [
           BottomNavigationBarItem(
             icon: Icon(Icons.group),

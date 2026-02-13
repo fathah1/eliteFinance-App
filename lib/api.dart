@@ -152,14 +152,9 @@ class Api {
       },
     );
 
-
-
     if (res.statusCode != 200) {
       throw Exception('Fetch customers failed: ${res.body}');
     }
-
-
-
 
     return jsonDecode(res.body) as List<dynamic>;
   }
@@ -542,7 +537,8 @@ class Api {
     String? photoPath,
   }) async {
     final token = await getToken();
-    debugPrint('PUT /items/$itemId name=$name unit=$unit sale=$salePrice purchase=$purchasePrice low=$lowStockAlert');
+    debugPrint(
+        'PUT /items/$itemId name=$name unit=$unit sale=$salePrice purchase=$purchasePrice low=$lowStockAlert');
     final uri = Uri.parse('$baseUrl/items/$itemId');
     final req = http.MultipartRequest('POST', uri);
     req.headers['Authorization'] = 'Bearer $token';
@@ -589,9 +585,12 @@ class Api {
     required double price,
     String? date,
     String? note,
+    int? saleId,
+    int? saleBillNumber,
   }) async {
     final token = await getToken();
-    debugPrint('POST /items/$itemId/stock type=$type qty=$quantity price=$price date=$date');
+    debugPrint(
+        'POST /items/$itemId/stock type=$type qty=$quantity price=$price date=$date');
     final res = await http.post(
       Uri.parse('$baseUrl/items/$itemId/stock'),
       headers: {
@@ -605,6 +604,8 @@ class Api {
         'price': price,
         'date': date,
         'note': note,
+        'sale_id': saleId,
+        'sale_bill_number': saleBillNumber,
       }),
     );
 
@@ -637,5 +638,95 @@ class Api {
 
     debugPrint('Movements response: ${res.statusCode} ${res.body}');
     return jsonDecode(res.body) as List<dynamic>;
+  }
+
+  static Future<List<dynamic>> getSales({
+    required int businessId,
+  }) async {
+    final token = await getToken();
+    final res = await http.get(
+      Uri.parse('$baseUrl/sales?business_id=$businessId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+
+    if (res.statusCode != 200) {
+      throw Exception('Fetch sales failed: ${res.body}');
+    }
+
+    return jsonDecode(res.body) as List<dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> createSale({
+    required int businessId,
+    required int billNumber,
+    required String date,
+    String? partyName,
+    String? partyPhone,
+    int? customerId,
+    required String paymentMode, // unpaid|cash|card
+    String? dueDate,
+    double? receivedAmount,
+    String? paymentReference,
+    String? privateNotes,
+    List<String>? photoPaths,
+    required double manualAmount,
+    required List<Map<String, dynamic>> lineItems,
+    required List<Map<String, dynamic>> additionalCharges,
+    required double discountValue,
+    required String discountType,
+    String? discountLabel,
+  }) async {
+    final token = await getToken();
+    final req = http.MultipartRequest('POST', Uri.parse('$baseUrl/sales'));
+    req.headers['Authorization'] = 'Bearer $token';
+    req.headers['Accept'] = 'application/json';
+    req.fields['business_id'] = businessId.toString();
+    req.fields['bill_number'] = billNumber.toString();
+    req.fields['date'] = date;
+    req.fields['payment_mode'] = paymentMode;
+    req.fields['manual_amount'] = manualAmount.toString();
+    req.fields['line_items'] = jsonEncode(lineItems);
+    req.fields['additional_charges'] = jsonEncode(additionalCharges);
+    req.fields['discount_value'] = discountValue.toString();
+    req.fields['discount_type'] = discountType;
+    if (partyName != null && partyName.trim().isNotEmpty) {
+      req.fields['party_name'] = partyName.trim();
+    }
+    if (partyPhone != null && partyPhone.trim().isNotEmpty) {
+      req.fields['party_phone'] = partyPhone.trim();
+    }
+    if (customerId != null) {
+      req.fields['customer_id'] = customerId.toString();
+    }
+    if (dueDate != null && dueDate.isNotEmpty) {
+      req.fields['due_date'] = dueDate;
+    }
+    if (receivedAmount != null) {
+      req.fields['received_amount'] = receivedAmount.toString();
+    }
+    if (paymentReference != null && paymentReference.trim().isNotEmpty) {
+      req.fields['payment_reference'] = paymentReference.trim();
+    }
+    if (privateNotes != null && privateNotes.trim().isNotEmpty) {
+      req.fields['private_notes'] = privateNotes.trim();
+    }
+    if (discountLabel != null && discountLabel.trim().isNotEmpty) {
+      req.fields['discount_label'] = discountLabel.trim();
+    }
+    if (photoPaths != null) {
+      for (final path in photoPaths) {
+        if (path.trim().isEmpty) continue;
+        req.files.add(await http.MultipartFile.fromPath('note_photos[]', path));
+      }
+    }
+    final res = await req.send();
+    final body = await res.stream.bytesToString();
+    if (res.statusCode != 201) {
+      throw Exception('Create sale failed: $body');
+    }
+    return jsonDecode(body) as Map<String, dynamic>;
   }
 }
