@@ -14,6 +14,7 @@ import 'screens/reports_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/splash_screen.dart';
 import 'screens/supplier_ledger_screen.dart';
+import 'screens/add_item_screen.dart';
 
 class AppRoutes {
   static const splash = '/';
@@ -30,6 +31,7 @@ class AppRoutes {
   static const supplierLedger = '/suppliers/ledger';
   static const addSupplierEntry = '/suppliers/entries/add';
   static const contactsImport = '/contacts/import';
+  static const addItem = '/items/add';
 
   static Route<dynamic> onGenerateRoute(RouteSettings routeSettings) {
     switch (routeSettings.name) {
@@ -98,6 +100,15 @@ class AppRoutes {
         return MaterialPageRoute(
           builder: (_) => ContactsImportScreen(
             mode: args['mode'] as String,
+          ),
+        );
+      case addItem:
+        final args =
+            (routeSettings.arguments ?? const {}) as Map<String, dynamic>;
+        return MaterialPageRoute(
+          builder: (_) => AddItemScreen(
+            type: args['type'] as String? ?? 'product',
+            initial: args['initial'] as Map<String, dynamic>?,
           ),
         );
       default:

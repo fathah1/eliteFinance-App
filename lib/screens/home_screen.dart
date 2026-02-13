@@ -30,6 +30,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String _tab = 'customers';
   double _giveTotal = 0;
   double _getTotal = 0;
+  final Map<int, DateTime> _dueMap = {};
 
   @override
   void initState() {
@@ -87,6 +88,7 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     try {
+      await _loadDueDates();
       if (_tab == 'customers') {
         final customers = await Api.getCustomers(
           businessId: _activeBusinessServerId!,
@@ -120,6 +122,39 @@ class _HomeScreenState extends State<HomeScreen> {
         _getTotal = 0;
       });
     }
+  }
+
+  Future<void> _loadDueDates() async {
+    final prefs = await SharedPreferences.getInstance();
+    _dueMap.clear();
+    final keys = prefs.getKeys();
+    for (final key in keys) {
+      if (_tab == 'customers' && key.startsWith('customer_due_')) {
+        final id = int.tryParse(key.replaceFirst('customer_due_', ''));
+        if (id == null) continue;
+        final raw = prefs.getString(key);
+        if (raw == null || raw.isEmpty) continue;
+        final dt = DateTime.tryParse(raw);
+        if (dt != null) _dueMap[id] = dt;
+      }
+      if (_tab == 'suppliers' && key.startsWith('supplier_due_')) {
+        final id = int.tryParse(key.replaceFirst('supplier_due_', ''));
+        if (id == null) continue;
+        final raw = prefs.getString(key);
+        if (raw == null || raw.isEmpty) continue;
+        final dt = DateTime.tryParse(raw);
+        if (dt != null) _dueMap[id] = dt;
+      }
+    }
+  }
+
+  String _dueChipLabel(DateTime due) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(due.year, due.month, due.day);
+    if (day == today) return 'Due today';
+    if (day.isBefore(today)) return 'Overdue';
+    return DateFormat('dd MMM').format(day);
   }
 
   void _buildListFromTransactions(
@@ -223,7 +258,9 @@ class _HomeScreenState extends State<HomeScreen> {
     if (iso == null || iso.isEmpty) return '';
     final dt = DateTime.tryParse(iso);
     if (dt == null) return '';
-    final diff = DateTime.now().difference(dt);
+    final dtUtc = dt.isUtc ? dt : dt.toUtc();
+    var diff = DateTime.now().toUtc().difference(dtUtc);
+    if (diff.isNegative) diff = diff.abs();
     if (diff.inSeconds < 60) return 'Just now';
     if (diff.inMinutes < 60) return '${diff.inMinutes} min ago';
     if (diff.inHours < 24) return '${diff.inHours} hr ago';
@@ -579,6 +616,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'home_add_customer_fab',
         backgroundColor: const Color(0xFFA0004A),
         foregroundColor: Colors.white,
         onPressed: _activeBusinessServerId == null
@@ -767,6 +805,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             itemBuilder: (context, index) {
                               final c = _filtered[index];
                               final balance = _asDouble(c['balance']);
+                              final id = c['id'] as int?;
+                              final due = id != null ? _dueMap[id] : null;
                               return ListTile(
                                 dense: true,
                                 contentPadding:
@@ -787,11 +827,40 @@ class _HomeScreenState extends State<HomeScreen> {
                                   ),
                                 ),
                                 title: Text((c['name'] ?? '').toString()),
-                                subtitle: Text(
-                                  _timeAgo(c['last_tx'] as String?) != ''
-                                      ? _timeAgo(c['last_tx'] as String?)
-                                      : (c['phone'] ?? '').toString(),
-                                  style: const TextStyle(fontSize: 12),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      _timeAgo(c['last_tx'] as String?) != ''
+                                          ? _timeAgo(c['last_tx'] as String?)
+                                          : (c['phone'] ?? '').toString(),
+                                      style: const TextStyle(fontSize: 12),
+                                    ),
+                                    if (due != null)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 4),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 2,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFFDEDED),
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                          ),
+                                          child: Text(
+                                            _dueChipLabel(due),
+                                            style: const TextStyle(
+                                              fontSize: 10,
+                                              color: Colors.red,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                  ],
                                 ),
                                 trailing: Column(
                                   mainAxisSize: MainAxisSize.min,

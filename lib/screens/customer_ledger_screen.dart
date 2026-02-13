@@ -72,8 +72,6 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
     if (date == null) {
       await prefs.remove(key);
       await NotificationService.cancel(notifyId);
-      if (!mounted) return;
-      setState(() => _dueDate = null);
       return;
     }
     await prefs.setString(key, date.toIso8601String());
@@ -83,8 +81,6 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
       body: 'Reminder to collect from ${widget.customer['name'] ?? 'customer'}.',
       date: date,
     );
-    if (!mounted) return;
-    setState(() => _dueDate = date);
   }
 
   String _dueLabel() {
@@ -142,18 +138,24 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                 leading: Radio<String>(
                   value: key,
                   groupValue: selectedKey(),
-                  onChanged: (_) {
+                  onChanged: (_) async {
                     selected = date;
                     setStateSheet(() {});
-                    _saveReminder(date);
+                    if (mounted) {
+                      setState(() => _dueDate = date);
+                    }
+                    await _saveReminder(date);
                     Navigator.pop(context);
                   },
                 ),
                 title: Text(label),
-                onTap: () {
+                onTap: () async {
                   selected = date;
                   setStateSheet(() {});
-                  _saveReminder(date);
+                  if (mounted) {
+                    setState(() => _dueDate = date);
+                  }
+                  await _saveReminder(date);
                   Navigator.pop(context);
                 },
               );
@@ -197,13 +199,16 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                         final picked = await showDatePicker(
                           context: context,
                           initialDate: selected ?? today,
-                          firstDate: today.subtract(const Duration(days: 365)),
+                          firstDate: DateTime(today.year, today.month, today.day),
                           lastDate: today.add(const Duration(days: 365 * 5)),
                         );
                         if (picked != null) {
                           selected = picked;
                           setStateSheet(() {});
-                          _saveReminder(picked);
+                          if (mounted) {
+                            setState(() => _dueDate = picked);
+                          }
+                          await _saveReminder(picked);
                           Navigator.pop(context);
                         }
                       },
@@ -221,21 +226,27 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                       final picked = await showDatePicker(
                         context: context,
                         initialDate: selected ?? today,
-                        firstDate: today.subtract(const Duration(days: 365)),
+                        firstDate: DateTime(today.year, today.month, today.day),
                         lastDate: today.add(const Duration(days: 365 * 5)),
                       );
                       if (picked != null) {
                         selected = picked;
                         setStateSheet(() {});
-                        _saveReminder(picked);
+                        if (mounted) {
+                          setState(() => _dueDate = picked);
+                        }
+                        await _saveReminder(picked);
                         Navigator.pop(context);
                       }
                     },
                   ),
                   const Divider(height: 24),
                   TextButton(
-                    onPressed: () {
-                      _saveReminder(null);
+                    onPressed: () async {
+                      if (mounted) {
+                        setState(() => _dueDate = null);
+                      }
+                      await _saveReminder(null);
                       Navigator.pop(context);
                     },
                     child: const Text(
@@ -530,7 +541,20 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.call),
-            onPressed: () {},
+            onPressed: () async {
+              final phone = (widget.customer['phone'] ?? '').toString().trim();
+              if (phone.isEmpty) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('No phone number found.')),
+                );
+                return;
+              }
+              final uri = Uri.parse('tel:$phone');
+              if (await canLaunchUrl(uri)) {
+                await launchUrl(uri);
+              }
+            },
           ),
         ],
       ),
@@ -572,14 +596,17 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                         ? const Text('Set collection reminder')
                         : Row(
                             children: [
-                              const Text('Payment is '),
-                              Text(
-                                _dueLabel().replaceFirst('Payment is ', ''),
-                                style: TextStyle(
-                                  color: (dueIsToday || dueIsOverdue)
-                                      ? Colors.red
-                                      : Colors.black,
-                                  fontWeight: FontWeight.w600,
+                              Expanded(
+                                child: Text(
+                                  _dueLabel(),
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: (dueIsToday || dueIsOverdue)
+                                        ? Colors.red
+                                        : Colors.black,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                               ),
                               if (_overdueDateLabel().isNotEmpty)
@@ -589,7 +616,7 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                                     _overdueDateLabel(),
                                     style: const TextStyle(
                                       color: Colors.black54,
-                                      fontSize: 12,
+                                      fontSize: 11,
                                     ),
                                   ),
                                 ),
@@ -597,7 +624,8 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                           ),
                     trailing: TextButton(
                       onPressed: _openReminderSheet,
-                      child: const Text('SET DATE'),
+                      child:
+                          Text(_dueDate == null ? 'SET DATE' : 'CHANGE DATE'),
                     ),
                     onTap: _openReminderSheet,
                   ),

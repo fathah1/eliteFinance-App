@@ -472,4 +472,170 @@ class Api {
 
     return jsonDecode(res.body) as List<dynamic>;
   }
+
+  static Future<List<dynamic>> getItems({
+    required int businessId,
+    required String type,
+  }) async {
+    final token = await getToken();
+    final res = await http.get(
+      Uri.parse('$baseUrl/items?business_id=$businessId&type=$type'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+
+    if (res.statusCode != 200) {
+      throw Exception('Fetch items failed: ${res.body}');
+    }
+
+    return jsonDecode(res.body) as List<dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> createItem({
+    required int businessId,
+    required String type,
+    required String name,
+    required String unit,
+    required double salePrice,
+    required double purchasePrice,
+    required bool taxIncluded,
+    required int openingStock,
+    required int lowStockAlert,
+    String? photoPath,
+  }) async {
+    final token = await getToken();
+    final uri = Uri.parse('$baseUrl/items');
+    final req = http.MultipartRequest('POST', uri);
+    req.headers['Authorization'] = 'Bearer $token';
+    req.headers['Accept'] = 'application/json';
+    req.fields['business_id'] = businessId.toString();
+    req.fields['type'] = type;
+    req.fields['name'] = name;
+    req.fields['unit'] = unit;
+    req.fields['sale_price'] = salePrice.toString();
+    req.fields['purchase_price'] = purchasePrice.toString();
+    req.fields['tax_included'] = taxIncluded ? '1' : '0';
+    req.fields['opening_stock'] = openingStock.toString();
+    req.fields['low_stock_alert'] = lowStockAlert.toString();
+    if (photoPath != null) {
+      req.files.add(await http.MultipartFile.fromPath('photo', photoPath));
+    }
+    final res = await req.send();
+    final body = await res.stream.bytesToString();
+    if (res.statusCode != 201) {
+      throw Exception('Create item failed: $body');
+    }
+    return jsonDecode(body) as Map<String, dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> updateItem({
+    required int itemId,
+    String? name,
+    String? unit,
+    bool? taxIncluded,
+    int? currentStock,
+    double? salePrice,
+    double? purchasePrice,
+    int? lowStockAlert,
+    String? photoPath,
+  }) async {
+    final token = await getToken();
+    debugPrint('PUT /items/$itemId name=$name unit=$unit sale=$salePrice purchase=$purchasePrice low=$lowStockAlert');
+    final uri = Uri.parse('$baseUrl/items/$itemId');
+    final req = http.MultipartRequest('POST', uri);
+    req.headers['Authorization'] = 'Bearer $token';
+    req.headers['Accept'] = 'application/json';
+    req.fields['_method'] = 'PUT';
+    if (name != null) {
+      req.fields['name'] = name;
+    }
+    if (unit != null) {
+      req.fields['unit'] = unit;
+    }
+    if (taxIncluded != null) {
+      req.fields['tax_included'] = taxIncluded ? '1' : '0';
+    }
+    if (currentStock != null) {
+      req.fields['current_stock'] = currentStock.toString();
+    }
+    if (salePrice != null) {
+      req.fields['sale_price'] = salePrice.toString();
+    }
+    if (purchasePrice != null) {
+      req.fields['purchase_price'] = purchasePrice.toString();
+    }
+    if (lowStockAlert != null) {
+      req.fields['low_stock_alert'] = lowStockAlert.toString();
+    }
+    if (photoPath != null && !photoPath.startsWith('http')) {
+      req.files.add(await http.MultipartFile.fromPath('photo', photoPath));
+    }
+    final res = await req.send();
+    final body = await res.stream.bytesToString();
+    if (res.statusCode != 200) {
+      debugPrint('Update item response: ${res.statusCode} $body');
+      throw Exception('Update item failed: $body');
+    }
+    debugPrint('Update item response: ${res.statusCode} $body');
+    return jsonDecode(body) as Map<String, dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> addItemStock({
+    required int itemId,
+    required String type, // in | out
+    required int quantity,
+    required double price,
+    String? date,
+    String? note,
+  }) async {
+    final token = await getToken();
+    debugPrint('POST /items/$itemId/stock type=$type qty=$quantity price=$price date=$date');
+    final res = await http.post(
+      Uri.parse('$baseUrl/items/$itemId/stock'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'type': type,
+        'quantity': quantity,
+        'price': price,
+        'date': date,
+        'note': note,
+      }),
+    );
+
+    if (res.statusCode != 200) {
+      debugPrint('Stock response: ${res.statusCode} ${res.body}');
+      throw Exception('Add stock failed: ${res.body}');
+    }
+
+    debugPrint('Stock response: ${res.statusCode} ${res.body}');
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static Future<List<dynamic>> getItemMovements({
+    required int itemId,
+  }) async {
+    final token = await getToken();
+    debugPrint('GET /items/$itemId/movements');
+    final res = await http.get(
+      Uri.parse('$baseUrl/items/$itemId/movements'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+
+    if (res.statusCode != 200) {
+      debugPrint('Movements response: ${res.statusCode} ${res.body}');
+      throw Exception('Fetch item movements failed: ${res.body}');
+    }
+
+    debugPrint('Movements response: ${res.statusCode} ${res.body}');
+    return jsonDecode(res.body) as List<dynamic>;
+  }
 }

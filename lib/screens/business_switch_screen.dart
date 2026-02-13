@@ -94,6 +94,7 @@ class _BusinessSwitchScreenState extends State<BusinessSwitchScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Businesses')),
       floatingActionButton: FloatingActionButton(
+        heroTag: 'business_add_fab',
         onPressed: _addBusiness,
         child: const Icon(Icons.add),
       ),
