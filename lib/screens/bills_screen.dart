@@ -2,10 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api.dart';
+import 'add_expense_screen.dart';
+import 'add_purchase_screen.dart';
 import 'add_sale_bill_screen.dart';
+import 'cashbook_screen.dart';
+import 'expense_detail_screen.dart';
 
-class _SaleBill {
-  _SaleBill({
+class _BillEntry {
+  _BillEntry({
     required this.id,
     required this.type,
     required this.partyName,
@@ -16,10 +20,11 @@ class _SaleBill {
     required this.paymentMode,
     required this.paymentStatusLabel,
     required this.statusColor,
+    this.extraInfo,
   });
 
   final int id;
-  final String type; // sale | payment_in
+  final String type; // sale|payment_in|purchase|payment_out|expense
   final String partyName;
   final String label;
   final int billNumber;
@@ -28,6 +33,7 @@ class _SaleBill {
   final String paymentMode;
   final String paymentStatusLabel;
   final Color statusColor;
+  final String? extraInfo;
 }
 
 class BillsScreen extends StatefulWidget {
@@ -40,141 +46,340 @@ class BillsScreen extends StatefulWidget {
 class _BillsScreenState extends State<BillsScreen> {
   String _tab = 'sale';
   String _query = '';
-  int _nextBillNo = 1;
   String _businessName = 'Business';
   bool _loading = true;
-  final List<_SaleBill> _sales = [];
+
+  final List<_BillEntry> _entries = [];
+
+  int _nextSaleNo = 1;
+  int _nextPurchaseNo = 1;
+  int _nextExpenseNo = 1;
 
   @override
   void initState() {
     super.initState();
-    _loadBusinessAndSales();
+    _loadAll();
   }
 
-  int get _draftBillNo => _nextBillNo <= 0 ? 1 : _nextBillNo;
+  int _toInt(dynamic value, {int fallback = 0}) {
+    if (value == null) return fallback;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value.toString()) ?? fallback;
+  }
 
-  int _computeNextBillNo() {
-    final saleRows = _sales.where((e) => e.type == 'sale').toList();
-    if (saleRows.isEmpty) return 1;
-    final maxNo =
-        saleRows.map((e) => e.billNumber).reduce((a, b) => a > b ? a : b);
+  double _toDouble(dynamic value, {double fallback = 0}) {
+    if (value == null) return fallback;
+    if (value is double) return value;
+    if (value is num) return value.toDouble();
+    return double.tryParse(value.toString()) ?? fallback;
+  }
+
+  int _nextNo(String type) {
+    final rows = _entries.where((e) => e.type == type).toList();
+    if (rows.isEmpty) return 1;
+    final maxNo = rows.map((e) => e.billNumber).reduce((a, b) => a > b ? a : b);
     return maxNo + 1;
   }
 
-  List<_SaleBill> get _filteredSales {
-    if (_query.trim().isEmpty) return _sales;
-    final q = _query.toLowerCase();
-    return _sales.where((b) {
-      return b.partyName.toLowerCase().contains(q) ||
-          b.label.toLowerCase().contains(q) ||
-          b.billNumber.toString().contains(q);
-    }).toList();
-  }
-
-  double get _monthlySales => _sales
-      .where((e) => e.type == 'sale')
-      .fold<double>(0, (sum, b) => sum + b.amount);
-
-  Future<void> _loadBusinessAndSales() async {
+  Future<void> _loadAll() async {
     final prefs = await SharedPreferences.getInstance();
-    final businessName =
-        prefs.getString('active_business_name')?.trim().isNotEmpty == true
-            ? prefs.getString('active_business_name')!.trim()
-            : 'Business';
     final businessId = prefs.getInt('active_business_server_id');
+    final businessName = prefs.getString('active_business_name')?.trim();
+
     if (!mounted) return;
     setState(() {
-      _businessName = businessName;
+      _businessName = (businessName == null || businessName.isEmpty)
+          ? 'Business'
+          : businessName;
       _loading = true;
     });
+
     if (businessId == null) {
       if (!mounted) return;
       setState(() {
-        _sales.clear();
-        _nextBillNo = 1;
+        _entries.clear();
+        _nextSaleNo = 1;
+        _nextPurchaseNo = 1;
+        _nextExpenseNo = 1;
         _loading = false;
       });
       return;
     }
+
     try {
-      final rows = await Api.getSales(businessId: businessId);
-      if (!mounted) return;
-      final mapped = <_SaleBill>[];
-      for (final raw in rows) {
+      final sales = await Api.getSales(businessId: businessId);
+      final purchases = await Api.getPurchases(businessId: businessId);
+      final expenses = await Api.getExpenses(businessId: businessId);
+
+      final mapped = <_BillEntry>[];
+
+      for (final raw in sales) {
         final m = Map<String, dynamic>.from(raw as Map);
-        final id = (m['id'] as num?)?.toInt() ?? 0;
-        final billNumber = (m['bill_number'] as num?)?.toInt() ?? 0;
+        final id = _toInt(m['id']);
+        final number = _toInt(m['bill_number']);
         final date =
             DateTime.tryParse((m['date'] ?? '').toString()) ?? DateTime.now();
         final party = ((m['party_name'] ?? '').toString().trim().isEmpty)
             ? 'Walk-in Sale'
             : (m['party_name'] ?? '').toString();
-        final total = (m['total_amount'] as num?)?.toDouble() ??
-            double.tryParse((m['total_amount'] ?? '0').toString()) ??
-            0;
-        final received = (m['received_amount'] as num?)?.toDouble() ??
-            double.tryParse((m['received_amount'] ?? '0').toString()) ??
-            0;
-        final paymentMode = (m['payment_mode'] ?? 'unpaid').toString();
-        final isUnpaid = paymentMode == 'unpaid';
+        final total = _toDouble(m['total_amount']);
+        final received = _toDouble(m['received_amount']);
+        final mode = (m['payment_mode'] ?? 'unpaid').toString();
+        final unpaid = mode == 'unpaid';
+
         mapped.add(
-          _SaleBill(
+          _BillEntry(
             id: id,
             type: 'sale',
             partyName: party,
-            label: 'Sale Bill #$billNumber',
-            billNumber: billNumber,
+            label: 'Sale Bill #$number',
+            billNumber: number,
             date: date,
             amount: total,
-            paymentMode: paymentMode,
-            paymentStatusLabel: isUnpaid ? 'Unpaid' : 'Fully Paid',
-            statusColor: isUnpaid ? Colors.red.shade700 : Colors.green,
+            paymentMode: mode,
+            paymentStatusLabel: unpaid ? 'Unpaid' : 'Fully Paid',
+            statusColor:
+                unpaid ? const Color(0xFFC6284D) : const Color(0xFF12965B),
           ),
         );
+
         if (received > 0) {
           mapped.add(
-            _SaleBill(
+            _BillEntry(
               id: id,
               type: 'payment_in',
               partyName: party,
-              label: 'Payment In #$billNumber',
-              billNumber: billNumber,
+              label: 'Payment In #$number',
+              billNumber: number,
               date: date,
               amount: received,
-              paymentMode: paymentMode,
-              paymentStatusLabel: paymentMode == 'card' ? 'Card' : 'Cash',
+              paymentMode: mode,
+              paymentStatusLabel: mode == 'card' ? 'Card' : 'Cash',
               statusColor: Colors.black87,
             ),
           );
         }
       }
+
+      for (final raw in purchases) {
+        final m = Map<String, dynamic>.from(raw as Map);
+        final id = _toInt(m['id']);
+        final number = _toInt(m['purchase_number']);
+        final date =
+            DateTime.tryParse((m['date'] ?? '').toString()) ?? DateTime.now();
+        final party = ((m['party_name'] ?? '').toString().trim().isEmpty)
+            ? 'Walk-in Purchase'
+            : (m['party_name'] ?? '').toString();
+        final total = _toDouble(m['total_amount']);
+        final paid = _toDouble(m['paid_amount']);
+        final mode = (m['payment_mode'] ?? 'unpaid').toString();
+        final unpaid = mode == 'unpaid';
+
+        mapped.add(
+          _BillEntry(
+            id: id,
+            type: 'purchase',
+            partyName: party,
+            label: 'Purchase #$number',
+            billNumber: number,
+            date: date,
+            amount: total,
+            paymentMode: mode,
+            paymentStatusLabel: unpaid ? 'Unpaid' : 'Fully Paid',
+            statusColor:
+                unpaid ? const Color(0xFFC6284D) : const Color(0xFF12965B),
+          ),
+        );
+
+        if (paid > 0) {
+          mapped.add(
+            _BillEntry(
+              id: id,
+              type: 'payment_out',
+              partyName: party,
+              label: 'Payment Out #$number',
+              billNumber: number,
+              date: date,
+              amount: paid,
+              paymentMode: mode,
+              paymentStatusLabel: mode == 'card' ? 'Card' : 'Cash',
+              statusColor: Colors.black87,
+            ),
+          );
+        }
+      }
+
+      for (final raw in expenses) {
+        final m = Map<String, dynamic>.from(raw as Map);
+        final id = _toInt(m['id']);
+        final number = _toInt(m['expense_number']);
+        final date =
+            DateTime.tryParse((m['date'] ?? '').toString()) ?? DateTime.now();
+        final amount = _toDouble(m['amount']);
+        final category = (m['category_name'] ?? '').toString().trim();
+        final items = (m['items'] as List?) ?? const [];
+        final names = items
+            .map((e) =>
+                (Map<String, dynamic>.from(e as Map)['name'] ?? '').toString())
+            .where((e) => e.trim().isNotEmpty)
+            .join(', ');
+        final info = [
+          if (category.isNotEmpty) category,
+          if (names.isNotEmpty) names,
+        ].join(' • ');
+
+        mapped.add(
+          _BillEntry(
+            id: id,
+            type: 'expense',
+            partyName: 'Expense',
+            label: 'Expense #$number',
+            billNumber: number,
+            date: date,
+            amount: amount,
+            paymentMode: 'expense',
+            paymentStatusLabel: '',
+            statusColor: Colors.black87,
+            extraInfo: info.isEmpty ? null : info,
+          ),
+        );
+      }
+
       mapped.sort((a, b) => b.date.compareTo(a.date));
-      setState(() {
-        _sales
-          ..clear()
-          ..addAll(mapped);
-        _nextBillNo = _computeNextBillNo();
-        _loading = false;
-      });
-    } catch (_) {
+
       if (!mounted) return;
       setState(() {
-        _sales.clear();
-        _nextBillNo = 1;
+        _entries
+          ..clear()
+          ..addAll(mapped);
+        _nextSaleNo = _nextNo('sale');
+        _nextPurchaseNo = _nextNo('purchase');
+        _nextExpenseNo = _nextNo('expense');
         _loading = false;
       });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Could not refresh bills: $e')));
     }
   }
 
-  Future<void> _openAddSaleBill() async {
+  List<_BillEntry> get _filtered {
+    Iterable<_BillEntry> rows;
+    if (_tab == 'sale') {
+      rows = _entries.where((e) => e.type == 'sale' || e.type == 'payment_in');
+    } else if (_tab == 'purchase') {
+      rows = _entries
+          .where((e) => e.type == 'purchase' || e.type == 'payment_out');
+    } else {
+      rows = _entries.where((e) => e.type == 'expense');
+    }
+
+    final q = _query.trim().toLowerCase();
+    if (q.isEmpty) return rows.toList();
+
+    return rows.where((e) {
+      return e.partyName.toLowerCase().contains(q) ||
+          e.label.toLowerCase().contains(q) ||
+          e.billNumber.toString().contains(q) ||
+          (e.extraInfo ?? '').toLowerCase().contains(q);
+    }).toList();
+  }
+
+  bool _isToday(DateTime d) {
+    final now = DateTime.now();
+    return d.year == now.year && d.month == now.month && d.day == now.day;
+  }
+
+  double get _monthlySales =>
+      _entries.where((e) => e.type == 'sale').fold(0, (s, e) => s + e.amount);
+
+  double get _monthlyPurchases => _entries
+      .where((e) => e.type == 'purchase')
+      .fold(0, (s, e) => s + e.amount);
+
+  double get _todayIn => _entries
+      .where((e) => e.type == 'payment_in' && _isToday(e.date))
+      .fold(0, (s, e) => s + e.amount);
+
+  double get _todayOut => _entries
+      .where((e) =>
+          (e.type == 'payment_out' || e.type == 'expense') && _isToday(e.date))
+      .fold(0, (s, e) => s + e.amount);
+
+  Future<void> _openSale() async {
     final draft = await Navigator.push<SaleBillDraft>(
       context,
       MaterialPageRoute(
-        builder: (_) => AddSaleBillScreen(billNumber: _draftBillNo),
+        builder: (_) =>
+            AddSaleBillScreen(billNumber: _nextSaleNo <= 0 ? 1 : _nextSaleNo),
       ),
     );
-    if (draft == null || draft.saved != true) return;
-    await _loadBusinessAndSales();
+    if (draft?.saved == true) await _loadAll();
+  }
+
+  Future<void> _openPurchase() async {
+    final draft = await Navigator.push<PurchaseDraft>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AddPurchaseScreen(
+          purchaseNumber: _nextPurchaseNo <= 0 ? 1 : _nextPurchaseNo,
+        ),
+      ),
+    );
+    if (draft?.saved == true) await _loadAll();
+  }
+
+  Future<void> _openExpense() async {
+    final draft = await Navigator.push<ExpenseDraft>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AddExpenseScreen(
+          expenseNumber: _nextExpenseNo <= 0 ? 1 : _nextExpenseNo,
+        ),
+      ),
+    );
+    if (draft?.saved == true) await _loadAll();
+  }
+
+  Future<void> _openExpenseDetails(_BillEntry entry) async {
+    final draft = await Navigator.push<ExpenseDraft>(
+      context,
+      MaterialPageRoute(
+          builder: (_) => ExpenseDetailScreen(expenseId: entry.id)),
+    );
+    if (draft?.saved == true) await _loadAll();
+  }
+
+  void _openCashbook() {
+    final rows = _entries
+        .where((e) =>
+            e.type == 'payment_in' ||
+            e.type == 'payment_out' ||
+            e.type == 'expense')
+        .map((e) => {
+              'date': e.date,
+              'label': e.type == 'payment_in'
+                  ? 'Payment In'
+                  : e.type == 'payment_out'
+                      ? 'Payment Out'
+                      : 'Expense',
+              'amount': e.amount,
+              'direction': e.type == 'payment_in' ? 'in' : 'out',
+            })
+        .toList();
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CashbookScreen(
+          businessName: _businessName,
+          entries: rows,
+        ),
+      ),
+    );
   }
 
   Future<void> _openMoreSheet() async {
@@ -192,13 +397,30 @@ class _BillsScreenState extends State<BillsScreen> {
             children: [
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: const [
-                  _MoreAction(icon: Icons.note_alt_outlined, label: 'Sale'),
+                children: [
                   _MoreAction(
-                      icon: Icons.assignment_return_outlined,
-                      label: 'Sale Return'),
+                    icon: Icons.note_alt_outlined,
+                    label: _tab == 'purchase' ? 'Purchase' : 'Sale',
+                    bg: const Color(0xFFE9F5ED),
+                    fg: const Color(0xFF12965B),
+                  ),
                   _MoreAction(
-                      icon: Icons.currency_exchange, label: 'Payment In'),
+                    icon: Icons.assignment_return_outlined,
+                    label:
+                        _tab == 'purchase' ? 'Purchase Return' : 'Sale Return',
+                    bg: const Color(0xFFF9F6DE),
+                    fg: const Color(0xFFA88E1F),
+                  ),
+                  _MoreAction(
+                    icon: Icons.currency_exchange,
+                    label: _tab == 'purchase' ? 'Payment Out' : 'Payment In',
+                    bg: _tab == 'purchase'
+                        ? const Color(0xFFFCEAF0)
+                        : const Color(0xFFE9F5ED),
+                    fg: _tab == 'purchase'
+                        ? const Color(0xFFC2185B)
+                        : const Color(0xFF12965B),
+                  ),
                 ],
               ),
               const SizedBox(height: 16),
@@ -210,15 +432,16 @@ class _BillsScreenState extends State<BillsScreen> {
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: Colors.black26),
                 ),
-                child: const Row(
+                child: Row(
                   children: [
                     Expanded(
                       child: Text(
-                        'Purchase, Payment Out, Purchase Return',
-                        style: TextStyle(fontSize: 18 / 1.15),
+                        _tab == 'purchase'
+                            ? 'Sale, Payment In, Sale Return'
+                            : 'Purchase, Payment Out, Purchase Return',
                       ),
                     ),
-                    Icon(Icons.chevron_right),
+                    const Icon(Icons.chevron_right),
                   ],
                 ),
               ),
@@ -246,11 +469,14 @@ class _BillsScreenState extends State<BillsScreen> {
                   children: [
                     const Icon(Icons.storefront_outlined, color: Colors.white),
                     const SizedBox(width: 10),
-                    Text(_businessName,
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 32 / 2)),
+                    Text(
+                      _businessName,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 16,
+                      ),
+                    ),
                     const SizedBox(width: 4),
                     const Icon(Icons.keyboard_arrow_down, color: Colors.white),
                   ],
@@ -260,68 +486,75 @@ class _BillsScreenState extends State<BillsScreen> {
                   children: [
                     Expanded(
                       child: _topStatCard(
-                          'AED ${_monthlySales.toStringAsFixed(0)}',
-                          'Monthly Sales',
-                          Colors.green),
+                        'AED ${_monthlySales.toStringAsFixed(0)}',
+                        'Monthly Sales',
+                        const Color(0xFF12965B),
+                      ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: _topStatCard(
-                          'AED 0', 'Monthly Purchases', Colors.red),
+                        'AED ${_monthlyPurchases.toStringAsFixed(0)}',
+                        'Monthly Purchases',
+                        const Color(0xFFC6284D),
+                      ),
                     ),
                     const SizedBox(width: 8),
-                    Expanded(
-                      child: _reportsCard(),
-                    ),
+                    Expanded(child: _reportsCard()),
                   ],
                 ),
                 const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Card(
-                        margin: EdgeInsets.zero,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8)),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 14, vertical: 12),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: const [
-                              Column(
-                                children: [
-                                  Text('AED 0',
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 18)),
-                                  SizedBox(height: 2),
-                                  Text("Today's IN",
-                                      style: TextStyle(color: Colors.black54)),
-                                ],
+                Card(
+                  margin: EdgeInsets.zero,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                  child: InkWell(
+                    onTap: _openCashbook,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 12),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            children: [
+                              Text(
+                                'AED ${_todayIn.toStringAsFixed(0)}',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 18,
+                                ),
                               ),
-                              Column(
-                                children: [
-                                  Text('AED 0',
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 18)),
-                                  SizedBox(height: 2),
-                                  Text("Today's OUT",
-                                      style: TextStyle(color: Colors.black54)),
-                                ],
-                              ),
-                              Text('CASHBOOK >',
-                                  style: TextStyle(
-                                      color: brandBlue,
-                                      fontWeight: FontWeight.w600)),
+                              const SizedBox(height: 2),
+                              const Text("Today's IN",
+                                  style: TextStyle(color: Colors.black54)),
                             ],
                           ),
-                        ),
+                          Column(
+                            children: [
+                              Text(
+                                'AED ${_todayOut.toStringAsFixed(0)}',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 18,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              const Text("Today's OUT",
+                                  style: TextStyle(color: Colors.black54)),
+                            ],
+                          ),
+                          const Text(
+                            'CASHBOOK >',
+                            style: TextStyle(
+                                color: brandBlue, fontWeight: FontWeight.w600),
+                          ),
+                        ],
                       ),
-                    )
-                  ],
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 10),
                 Row(
@@ -363,7 +596,7 @@ class _BillsScreenState extends State<BillsScreen> {
                                         ? 'Search for sales transactions'
                                         : _tab == 'purchase'
                                             ? 'Search for purchase transactions'
-                                            : 'Search for expense transactions',
+                                            : 'Search for Expenses',
                                     border: InputBorder.none,
                                   ),
                                 ),
@@ -381,107 +614,31 @@ class _BillsScreenState extends State<BillsScreen> {
                   ),
                 ),
                 Expanded(
-                  child: _tab == 'sale'
-                      ? _loading
-                          ? const Center(child: CircularProgressIndicator())
-                          : _filteredSales.isEmpty
-                              ? const Center(child: Text('No sale bills yet'))
-                              : ListView.builder(
-                                  itemCount: _filteredSales.length,
-                                  itemBuilder: (context, index) {
-                                    final b = _filteredSales[index];
-                                    return Container(
-                                      color: Colors.white,
-                                      padding: const EdgeInsets.all(12),
-                                      margin: const EdgeInsets.only(bottom: 1),
-                                      child: Row(
-                                        children: [
-                                          CircleAvatar(
-                                            radius: 24,
-                                            backgroundColor: b.type == 'sale'
-                                                ? const Color(0xFFEAF2FF)
-                                                : const Color(0xFFE8F7EC),
-                                            child: Icon(
-                                              b.type == 'sale'
-                                                  ? Icons.receipt_long
-                                                  : Icons.currency_rupee,
-                                              color: b.type == 'sale'
-                                                  ? brandBlue.withValues(
-                                                      alpha: 0.9)
-                                                  : const Color(0xFF12965B),
-                                            ),
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(b.partyName,
-                                                    style: const TextStyle(
-                                                        fontSize: 20 / 1.2,
-                                                        fontWeight:
-                                                            FontWeight.w500)),
-                                                const SizedBox(height: 4),
-                                                Container(
-                                                  padding: const EdgeInsets
-                                                      .symmetric(
-                                                      horizontal: 8,
-                                                      vertical: 4),
-                                                  decoration: BoxDecoration(
-                                                    color:
-                                                        const Color(0xFFF2F2F2),
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            6),
-                                                  ),
-                                                  child: Text(
-                                                    b.label,
-                                                    style: const TextStyle(
-                                                        color: Colors.black54),
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 4),
-                                                Text(
-                                                  '${b.date.day} ${_month(b.date.month)} ${b.date.year.toString().substring(2)}',
-                                                  style: const TextStyle(
-                                                      color: Colors.black54),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                          Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.end,
-                                            children: [
-                                              Text(
-                                                  'AED ${b.amount.toStringAsFixed(0)}',
-                                                  style: const TextStyle(
-                                                      fontWeight:
-                                                          FontWeight.w600,
-                                                      fontSize: 18)),
-                                              const SizedBox(height: 8),
-                                              Text(
-                                                b.paymentStatusLabel,
-                                                style: TextStyle(
-                                                  color: b.statusColor,
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                              ),
-                                            ],
-                                          )
-                                        ],
-                                      ),
-                                    );
-                                  },
-                                )
-                      : Center(
-                          child: Text(
-                            _tab == 'purchase'
-                                ? 'Purchase section next'
-                                : 'Expense section next',
-                          ),
-                        ),
+                  child: _loading
+                      ? const Center(child: CircularProgressIndicator())
+                      : _filtered.isEmpty
+                          ? Center(
+                              child: Text(
+                                _tab == 'sale'
+                                    ? 'No sale bills yet'
+                                    : _tab == 'purchase'
+                                        ? 'No purchase bills yet'
+                                        : 'No expenses yet',
+                              ),
+                            )
+                          : ListView.builder(
+                              itemCount: _filtered.length,
+                              padding: const EdgeInsets.only(bottom: 90),
+                              itemBuilder: (context, index) {
+                                final e = _filtered[index];
+                                return InkWell(
+                                  onTap: e.type == 'expense'
+                                      ? () => _openExpenseDetails(e)
+                                      : null,
+                                  child: _entryTile(e),
+                                );
+                              },
+                            ),
                 ),
               ],
             ),
@@ -508,10 +665,13 @@ class _BillsScreenState extends State<BillsScreen> {
                   child: const Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text('MORE',
-                          style: TextStyle(
-                              color: Color(0xFF1D2A8D),
-                              fontWeight: FontWeight.w700)),
+                      Text(
+                        'MORE',
+                        style: TextStyle(
+                          color: Color(0xFF1D2A8D),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                       SizedBox(height: 2),
                       Text('Payment & Return',
                           style: TextStyle(color: Color(0xFF1D2A8D))),
@@ -522,10 +682,24 @@ class _BillsScreenState extends State<BillsScreen> {
               const SizedBox(width: 12),
               Expanded(
                 child: ElevatedButton.icon(
-                  onPressed: _tab == 'sale' ? _openAddSaleBill : null,
-                  icon: const Icon(Icons.note_add_outlined),
-                  label: const Text('ADD BILL',
-                      style: TextStyle(fontWeight: FontWeight.w700)),
+                  onPressed: _tab == 'sale'
+                      ? _openSale
+                      : _tab == 'purchase'
+                          ? _openPurchase
+                          : _openExpense,
+                  icon: Icon(
+                    _tab == 'expense'
+                        ? Icons.money_off_csred_outlined
+                        : Icons.note_add_outlined,
+                  ),
+                  label: Text(
+                    _tab == 'sale'
+                        ? 'ADD BILL'
+                        : _tab == 'purchase'
+                            ? 'ADD PURCHASE'
+                            : 'ADD EXPENSE',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF1D2A8D),
                     foregroundColor: Colors.white,
@@ -539,6 +713,110 @@ class _BillsScreenState extends State<BillsScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _entryTile(_BillEntry e) {
+    const brandBlue = Color(0xFF0B4F9E);
+
+    IconData icon;
+    Color bg;
+    Color fg;
+    switch (e.type) {
+      case 'sale':
+        icon = Icons.receipt_long;
+        bg = const Color(0xFFEAF2FF);
+        fg = brandBlue;
+        break;
+      case 'purchase':
+        icon = Icons.shopping_cart_outlined;
+        bg = const Color(0xFFF3F2FF);
+        fg = const Color(0xFF4B5DA8);
+        break;
+      case 'payment_out':
+      case 'expense':
+        icon = Icons.currency_rupee;
+        bg = const Color(0xFFFCEAF0);
+        fg = const Color(0xFFC2185B);
+        break;
+      case 'payment_in':
+      default:
+        icon = Icons.currency_rupee;
+        bg = const Color(0xFFE8F7EC);
+        fg = const Color(0xFF12965B);
+        break;
+    }
+
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.all(12),
+      margin: const EdgeInsets.only(bottom: 1),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 24,
+            backgroundColor: bg,
+            child: Icon(icon, color: fg),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  e.partyName,
+                  style: const TextStyle(
+                      fontSize: 17, fontWeight: FontWeight.w500),
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF2F2F2),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    e.label,
+                    style: const TextStyle(color: Colors.black54),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${e.date.day.toString().padLeft(2, '0')} ${_month(e.date.month)} ${e.date.year.toString().substring(2)}',
+                  style: const TextStyle(color: Colors.black54),
+                ),
+                if (e.extraInfo != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    e.extraInfo!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.black45, fontSize: 12),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                'AED ${e.amount.toStringAsFixed(0)}',
+                style:
+                    const TextStyle(fontWeight: FontWeight.w600, fontSize: 18),
+              ),
+              const SizedBox(height: 8),
+              if (e.paymentStatusLabel.isNotEmpty)
+                Text(
+                  e.paymentStatusLabel,
+                  style: TextStyle(
+                      color: e.statusColor, fontWeight: FontWeight.w600),
+                ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -577,11 +855,11 @@ class _BillsScreenState extends State<BillsScreen> {
         padding: const EdgeInsets.symmetric(vertical: 12),
         child: Column(
           children: [
-            Text(value,
-                style: TextStyle(
-                    color: valueColor,
-                    fontSize: 28 / 2,
-                    fontWeight: FontWeight.w700)),
+            Text(
+              value,
+              style: TextStyle(
+                  color: valueColor, fontSize: 14, fontWeight: FontWeight.w700),
+            ),
             const SizedBox(height: 3),
             Text(title, style: const TextStyle(color: Colors.black54)),
           ],
@@ -599,17 +877,46 @@ class _BillsScreenState extends State<BillsScreen> {
         padding: EdgeInsets.symmetric(vertical: 12),
         child: Column(
           children: [
-            Text('VIEW\nREPORTS',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                    color: Color(0xFF0B4F9E),
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700)),
+            Text(
+              'VIEW\nREPORTS',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Color(0xFF0B4F9E),
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
             SizedBox(height: 3),
             Icon(Icons.chevron_right, color: Color(0xFF0B4F9E)),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _MoreAction extends StatelessWidget {
+  const _MoreAction({
+    required this.icon,
+    required this.label,
+    required this.bg,
+    required this.fg,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color bg;
+  final Color fg;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        CircleAvatar(
+            radius: 26, backgroundColor: bg, child: Icon(icon, color: fg)),
+        const SizedBox(height: 8),
+        Text(label),
+      ],
     );
   }
 }
@@ -630,26 +937,4 @@ String _month(int m) {
     'Dec'
   ];
   return months[m - 1];
-}
-
-class _MoreAction extends StatelessWidget {
-  const _MoreAction({required this.icon, required this.label});
-
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        CircleAvatar(
-          radius: 26,
-          backgroundColor: const Color(0xFFE9F5ED),
-          child: Icon(icon, color: const Color(0xFF12965B)),
-        ),
-        const SizedBox(height: 8),
-        Text(label),
-      ],
-    );
-  }
 }

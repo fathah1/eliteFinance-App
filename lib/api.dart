@@ -655,8 +655,13 @@ class Api {
     if (res.statusCode != 200) {
       throw Exception('Fetch sales failed: ${res.body}');
     }
-
-    return jsonDecode(res.body) as List<dynamic>;
+    final decoded = jsonDecode(res.body);
+    if (decoded is List) return decoded;
+    if (decoded is Map<String, dynamic>) {
+      final data = decoded['data'];
+      if (data is List) return data;
+    }
+    throw Exception('Unexpected sales response format: ${res.body}');
   }
 
   static Future<Map<String, dynamic>> createSale({
@@ -728,5 +733,345 @@ class Api {
       throw Exception('Create sale failed: $body');
     }
     return jsonDecode(body) as Map<String, dynamic>;
+  }
+
+  static Future<List<dynamic>> getPurchases({
+    required int businessId,
+  }) async {
+    final token = await getToken();
+    final res = await http.get(
+      Uri.parse('$baseUrl/purchases?business_id=$businessId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+
+    if (res.statusCode != 200) {
+      throw Exception('Fetch purchases failed: ${res.body}');
+    }
+
+    final decoded = jsonDecode(res.body);
+    if (decoded is List) return decoded;
+    if (decoded is Map<String, dynamic>) {
+      final data = decoded['data'];
+      if (data is List) return data;
+    }
+    throw Exception('Unexpected purchases response format: ${res.body}');
+  }
+
+  static Future<Map<String, dynamic>> createPurchase({
+    required int businessId,
+    required int purchaseNumber,
+    required String date,
+    String? partyName,
+    String? partyPhone,
+    int? supplierId,
+    required String paymentMode, // unpaid|cash|card
+    String? dueDate,
+    double? paidAmount,
+    String? paymentReference,
+    String? privateNotes,
+    List<String>? photoPaths,
+    required double manualAmount,
+    required List<Map<String, dynamic>> lineItems,
+    required List<Map<String, dynamic>> additionalCharges,
+    required double discountValue,
+    required String discountType,
+    String? discountLabel,
+  }) async {
+    final token = await getToken();
+    final req = http.MultipartRequest('POST', Uri.parse('$baseUrl/purchases'));
+    req.headers['Authorization'] = 'Bearer $token';
+    req.headers['Accept'] = 'application/json';
+    req.fields['business_id'] = businessId.toString();
+    req.fields['purchase_number'] = purchaseNumber.toString();
+    req.fields['date'] = date;
+    req.fields['payment_mode'] = paymentMode;
+    req.fields['manual_amount'] = manualAmount.toString();
+    req.fields['line_items'] = jsonEncode(lineItems);
+    req.fields['additional_charges'] = jsonEncode(additionalCharges);
+    req.fields['discount_value'] = discountValue.toString();
+    req.fields['discount_type'] = discountType;
+    if (partyName != null && partyName.trim().isNotEmpty) {
+      req.fields['party_name'] = partyName.trim();
+    }
+    if (partyPhone != null && partyPhone.trim().isNotEmpty) {
+      req.fields['party_phone'] = partyPhone.trim();
+    }
+    if (supplierId != null) {
+      req.fields['supplier_id'] = supplierId.toString();
+    }
+    if (dueDate != null && dueDate.isNotEmpty) {
+      req.fields['due_date'] = dueDate;
+    }
+    if (paidAmount != null) {
+      req.fields['paid_amount'] = paidAmount.toString();
+    }
+    if (paymentReference != null && paymentReference.trim().isNotEmpty) {
+      req.fields['payment_reference'] = paymentReference.trim();
+    }
+    if (privateNotes != null && privateNotes.trim().isNotEmpty) {
+      req.fields['private_notes'] = privateNotes.trim();
+    }
+    if (discountLabel != null && discountLabel.trim().isNotEmpty) {
+      req.fields['discount_label'] = discountLabel.trim();
+    }
+    if (photoPaths != null) {
+      for (final path in photoPaths) {
+        if (path.trim().isEmpty) continue;
+        req.files.add(await http.MultipartFile.fromPath('note_photos[]', path));
+      }
+    }
+    final res = await req.send();
+    final body = await res.stream.bytesToString();
+    if (res.statusCode != 201) {
+      throw Exception('Create purchase failed: $body');
+    }
+    return jsonDecode(body) as Map<String, dynamic>;
+  }
+
+  static Future<List<dynamic>> getExpenseCategories({
+    required int businessId,
+  }) async {
+    final token = await getToken();
+    final res = await http.get(
+      Uri.parse('$baseUrl/expense-categories?business_id=$businessId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Fetch expense categories failed: ${res.body}');
+    }
+    return jsonDecode(res.body) as List<dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> createExpenseCategory({
+    required int businessId,
+    required String name,
+  }) async {
+    final token = await getToken();
+    final res = await http.post(
+      Uri.parse('$baseUrl/expense-categories'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'business_id': businessId,
+        'name': name,
+      }),
+    );
+    if (res.statusCode != 201) {
+      throw Exception('Create expense category failed: ${res.body}');
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static Future<List<dynamic>> getExpenses({
+    required int businessId,
+  }) async {
+    final token = await getToken();
+    final res = await http.get(
+      Uri.parse('$baseUrl/expenses?business_id=$businessId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Fetch expenses failed: ${res.body}');
+    }
+    final decoded = jsonDecode(res.body);
+    if (decoded is List) return decoded;
+    if (decoded is Map<String, dynamic>) {
+      final data = decoded['data'];
+      if (data is List) return data;
+    }
+    throw Exception('Unexpected expenses response format: ${res.body}');
+  }
+
+  static Future<Map<String, dynamic>> createExpense({
+    required int businessId,
+    required int expenseNumber,
+    required String date,
+    int? categoryId,
+    String? categoryName,
+    required double manualAmount,
+    required List<Map<String, dynamic>> items,
+  }) async {
+    final token = await getToken();
+    final res = await http.post(
+      Uri.parse('$baseUrl/expenses'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'business_id': businessId,
+        'expense_number': expenseNumber,
+        'date': date,
+        'category_id': categoryId,
+        'category_name': categoryName,
+        'manual_amount': manualAmount,
+        'items': items,
+      }),
+    );
+    if (res.statusCode != 201) {
+      throw Exception('Create expense failed: ${res.body}');
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static Future<List<dynamic>> getExpenseItems({
+    required int businessId,
+  }) async {
+    final token = await getToken();
+    final res = await http.get(
+      Uri.parse('$baseUrl/expense-items?business_id=$businessId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Fetch expense items failed: ${res.body}');
+    }
+    return jsonDecode(res.body) as List<dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> createExpenseItem({
+    required int businessId,
+    required String name,
+    required double rate,
+  }) async {
+    final token = await getToken();
+    final res = await http.post(
+      Uri.parse('$baseUrl/expense-items'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'business_id': businessId,
+        'name': name,
+        'rate': rate,
+      }),
+    );
+    if (res.statusCode != 201) {
+      throw Exception('Create expense item failed: ${res.body}');
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> updateExpenseItem({
+    required int id,
+    required String name,
+    required double rate,
+  }) async {
+    final token = await getToken();
+    final res = await http.put(
+      Uri.parse('$baseUrl/expense-items/$id'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'name': name,
+        'rate': rate,
+      }),
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Update expense item failed: ${res.body}');
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> getExpense({
+    required int id,
+  }) async {
+    final token = await getToken();
+    final res = await http.get(
+      Uri.parse('$baseUrl/expenses/$id'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Fetch expense failed: ${res.body}');
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> updateExpense({
+    required int id,
+    required int expenseNumber,
+    required String date,
+    int? categoryId,
+    String? categoryName,
+    required double manualAmount,
+    required List<Map<String, dynamic>> items,
+  }) async {
+    final token = await getToken();
+    final res = await http.put(
+      Uri.parse('$baseUrl/expenses/$id'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'expense_number': expenseNumber,
+        'date': date,
+        'category_id': categoryId,
+        'category_name': categoryName,
+        'manual_amount': manualAmount,
+        'items': items,
+      }),
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Update expense failed: ${res.body}');
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static Future<void> deleteExpense({
+    required int id,
+  }) async {
+    final token = await getToken();
+    final res = await http.delete(
+      Uri.parse('$baseUrl/expenses/$id'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Delete expense failed: ${res.body}');
+    }
+  }
+
+  static Future<Map<String, dynamic>> getCashbook({
+    required int businessId,
+  }) async {
+    final token = await getToken();
+    final res = await http.get(
+      Uri.parse('$baseUrl/cashbook?business_id=$businessId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Fetch cashbook failed: ${res.body}');
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
   }
 }

@@ -32,7 +32,11 @@ class _SaleInvoiceScreenState extends State<SaleInvoiceScreen> {
     return raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
   }
 
-  double _n(dynamic v) => (v as num?)?.toDouble() ?? double.tryParse('$v') ?? 0;
+  double _n(dynamic v) {
+    if (v == null) return 0;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString()) ?? 0;
+  }
 
   String _dateText() => (widget.sale['date'] ?? '').toString();
 
