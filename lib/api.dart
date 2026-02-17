@@ -62,7 +62,14 @@ class Api {
     final data = jsonDecode(res.body) as Map<String, dynamic>;
     await saveToken(data['token']);
     if (data['user'] is Map<String, dynamic>) {
-      await saveUser(data['user'] as Map<String, dynamic>);
+      final user = Map<String, dynamic>.from(data['user'] as Map);
+      if (data['permissions'] is Map<String, dynamic>) {
+        user['permissions'] = data['permissions'];
+      }
+      if (data['business_ids'] is List) {
+        user['business_ids'] = data['business_ids'];
+      }
+      await saveUser(user);
     }
     return data;
   }
@@ -96,9 +103,66 @@ class Api {
     final data = jsonDecode(res.body) as Map<String, dynamic>;
     await saveToken(data['token']);
     if (data['user'] is Map<String, dynamic>) {
-      await saveUser(data['user'] as Map<String, dynamic>);
+      final user = Map<String, dynamic>.from(data['user'] as Map);
+      if (data['permissions'] is Map<String, dynamic>) {
+        user['permissions'] = data['permissions'];
+      }
+      if (data['business_ids'] is List) {
+        user['business_ids'] = data['business_ids'];
+      }
+      await saveUser(user);
     }
     return data;
+  }
+
+  static Future<List<dynamic>> getStaffUsers() async {
+    final token = await getToken();
+    final res = await http.get(
+      Uri.parse('$baseUrl/users/staff'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+
+    if (res.statusCode != 200) {
+      throw Exception('Fetch users failed: ${res.body}');
+    }
+
+    return jsonDecode(res.body) as List<dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> createStaffUser({
+    required String username,
+    required String name,
+    required String password,
+    String? phone,
+    required List<int> businessIds,
+    required Map<String, dynamic> permissions,
+  }) async {
+    final token = await getToken();
+    final res = await http.post(
+      Uri.parse('$baseUrl/users/staff'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'username': username,
+        'name': name,
+        'password': password,
+        'phone': phone,
+        'business_ids': businessIds,
+        'permissions': permissions,
+      }),
+    );
+
+    if (res.statusCode != 201) {
+      throw Exception('Create user failed: ${res.body}');
+    }
+
+    return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
   static Future<List<dynamic>> getBusinesses() async {

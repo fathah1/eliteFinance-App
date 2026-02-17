@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../api.dart';
 import '../db.dart';
 import '../routes.dart';
@@ -38,13 +39,37 @@ class _LoginScreenState extends State<LoginScreen> {
       if (data['user'] is Map<String, dynamic>) {
         await Db.instance.upsertUser(data['user'] as Map<String, dynamic>);
       }
+      if (data['business_ids'] is List &&
+          (data['business_ids'] as List).isNotEmpty) {
+        final ids = (data['business_ids'] as List)
+            .map((e) => int.tryParse(e.toString()))
+            .whereType<int>()
+            .toList();
+        if (ids.isNotEmpty) {
+          final businesses = await Api.getBusinesses();
+          if (businesses.isNotEmpty) {
+            final first = businesses.cast<Map<String, dynamic>>().firstWhere(
+                  (b) => ids.contains((b['id'] as num).toInt()),
+                  orElse: () => businesses.cast<Map<String, dynamic>>().first,
+                );
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setInt(
+                'active_business_server_id', (first['id'] as num).toInt());
+            await prefs.setString(
+              'active_business_name',
+              (first['name'] ?? 'Business').toString(),
+            );
+          }
+        }
+      }
 
       if (!mounted) return;
-      Navigator.pushReplacement(
+      Navigator.pushAndRemoveUntil(
         context,
         AppRoutes.onGenerateRoute(
           const RouteSettings(name: AppRoutes.home),
         ),
+        (route) => false,
       );
     } catch (e) {
       setState(() {
@@ -69,6 +94,7 @@ class _LoginScreenState extends State<LoginScreen> {
               controller: _usernameController,
               decoration: const InputDecoration(labelText: 'Username'),
             ),
+            const SizedBox(height: 8),
             TextField(
               controller: _passwordController,
               obscureText: true,

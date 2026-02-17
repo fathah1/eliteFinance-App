@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../access_control.dart';
 import '../api.dart';
 
 class BusinessSwitchScreen extends StatefulWidget {
@@ -13,6 +14,7 @@ class _BusinessSwitchScreenState extends State<BusinessSwitchScreen> {
   List<Map<String, dynamic>> _businesses = [];
   bool _loading = true;
   String? _error;
+  bool _isSuperUser = true;
 
   @override
   void initState() {
@@ -28,9 +30,11 @@ class _BusinessSwitchScreenState extends State<BusinessSwitchScreen> {
 
     try {
       final remote = await Api.getBusinesses();
+      final user = await Api.getUser();
       if (!mounted) return;
       setState(() {
         _businesses = remote.cast<Map<String, dynamic>>();
+        _isSuperUser = AccessControl.isSuperUser(user);
         _loading = false;
       });
       return;
@@ -79,7 +83,8 @@ class _BusinessSwitchScreenState extends State<BusinessSwitchScreen> {
     try {
       final created = await Api.createBusiness(name: name);
       if (created['id'] != null) {
-        await _setActiveBusiness(created['id'] as int, created['name'] as String);
+        await _setActiveBusiness(
+            created['id'] as int, created['name'] as String);
         return;
       }
     } catch (_) {
@@ -93,11 +98,13 @@ class _BusinessSwitchScreenState extends State<BusinessSwitchScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Businesses')),
-      floatingActionButton: FloatingActionButton(
-        heroTag: 'business_add_fab',
-        onPressed: _addBusiness,
-        child: const Icon(Icons.add),
-      ),
+      floatingActionButton: _isSuperUser
+          ? FloatingActionButton(
+              heroTag: 'business_add_fab',
+              onPressed: _addBusiness,
+              child: const Icon(Icons.add),
+            )
+          : null,
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
@@ -112,8 +119,7 @@ class _BusinessSwitchScreenState extends State<BusinessSwitchScreen> {
                         final name = (b['name'] ?? '').toString();
                         return ListTile(
                           title: Text(name),
-                          onTap: () =>
-                              _setActiveBusiness(b['id'] as int, name),
+                          onTap: () => _setActiveBusiness(b['id'] as int, name),
                         );
                       },
                     ),

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
+import '../access_control.dart';
 import '../api.dart';
 import '../routes.dart';
 import 'item_detail_screen.dart';
@@ -48,12 +49,12 @@ class _ItemsScreenState extends State<ItemsScreen> {
   int _nextId = 1;
   int? _activeBusinessServerId;
   bool _loading = true;
+  bool _canAddItems = true;
+  bool _canEditItems = true;
 
   List<ItemData> get _filtered {
     final list = _items.where((i) => i.type == _tab).toList();
-    final filtered = _filter == 'low'
-        ? list.where(_isLowStock).toList()
-        : list;
+    final filtered = _filter == 'low' ? list.where(_isLowStock).toList() : list;
     if (_query.isEmpty) return filtered;
     final q = _query.toLowerCase();
     return filtered.where((i) => i.name.toLowerCase().contains(q)).toList();
@@ -82,6 +83,9 @@ class _ItemsScreenState extends State<ItemsScreen> {
   Future<void> _init() async {
     final prefs = await SharedPreferences.getInstance();
     _activeBusinessServerId = prefs.getInt('active_business_server_id');
+    final user = await Api.getUser();
+    _canAddItems = AccessControl.canAdd(user, 'items');
+    _canEditItems = AccessControl.canEdit(user, 'items');
     if (_activeBusinessServerId == null) {
       await _autoSelectBusiness();
     }
@@ -133,8 +137,7 @@ class _ItemsScreenState extends State<ItemsScreen> {
           unit: (map['unit'] ?? 'PCS').toString(),
           salePrice:
               double.tryParse((map['sale_price'] ?? '0').toString()) ?? 0,
-          purchasePrice:
-              double.tryParse(purchase.toString()) ?? 0,
+          purchasePrice: double.tryParse(purchase.toString()) ?? 0,
           taxIncluded: (map['tax_included'] ?? true) == true ||
               (map['tax_included']?.toString() == '1'),
           currentStock: (map['current_stock'] ?? 0) as int,
@@ -204,8 +207,7 @@ class _ItemsScreenState extends State<ItemsScreen> {
                           .toString()) ??
                   _items[idx].purchasePrice
               ..lowStockAlert = int.tryParse(
-                      (updated['low_stock_alert'] ??
-                              _items[idx].lowStockAlert)
+                      (updated['low_stock_alert'] ?? _items[idx].lowStockAlert)
                           .toString()) ??
                   _items[idx].lowStockAlert
               ..currentStock = int.tryParse(
@@ -229,30 +231,27 @@ class _ItemsScreenState extends State<ItemsScreen> {
           lowStockAlert: result['lowStockAlert'] as int,
           photoPath: result['photoPath'] as String?,
         );
-          final photo = (created['photo_path'] ?? '').toString();
-          final photoUrl = photo.isEmpty
-              ? null
-              : 'https://eliteposs.com/financeserver/public/storage/$photo';
+        final photo = (created['photo_path'] ?? '').toString();
+        final photoUrl = photo.isEmpty
+            ? null
+            : 'https://eliteposs.com/financeserver/public/storage/$photo';
         setState(() {
           _items.add(ItemData(
             id: created['id'] as int,
             type: (created['type'] ?? 'product').toString(),
             name: (created['name'] ?? '').toString(),
             unit: (created['unit'] ?? 'PCS').toString(),
-            salePrice: double.tryParse(
-                    (created['sale_price'] ?? '0').toString()) ??
-                0,
+            salePrice:
+                double.tryParse((created['sale_price'] ?? '0').toString()) ?? 0,
             purchasePrice: double.tryParse(
                     (created['purchase_price'] ?? '0').toString()) ??
                 0,
             taxIncluded: (created['tax_included'] ?? true) == true ||
                 (created['tax_included']?.toString() == '1'),
-            currentStock: int.tryParse(
-                    (created['current_stock'] ?? 0).toString()) ??
-                0,
-            lowStockAlert: int.tryParse(
-                    (created['low_stock_alert'] ?? 0).toString()) ??
-                0,
+            currentStock:
+                int.tryParse((created['current_stock'] ?? 0).toString()) ?? 0,
+            lowStockAlert:
+                int.tryParse((created['low_stock_alert'] ?? 0).toString()) ?? 0,
             photoPath: photoUrl,
           ));
         });
@@ -262,6 +261,7 @@ class _ItemsScreenState extends State<ItemsScreen> {
   }
 
   Future<void> _openStockSheet(ItemData item, String type) async {
+    if (!_canEditItems) return;
     final qtyController = TextEditingController(text: '0');
     final priceController = TextEditingController(
       text: type == 'in'
@@ -376,7 +376,8 @@ class _ItemsScreenState extends State<ItemsScreen> {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text(DateFormat('dd MMM yy').format(selectedDate)),
+                              Text(
+                                  DateFormat('dd MMM yy').format(selectedDate)),
                               const Icon(Icons.expand_more),
                             ],
                           ),
@@ -404,8 +405,7 @@ class _ItemsScreenState extends State<ItemsScreen> {
                             ),
                             actions: [
                               TextButton(
-                                onPressed: () =>
-                                    Navigator.pop(context, null),
+                                onPressed: () => Navigator.pop(context, null),
                                 child: const Text('Cancel'),
                               ),
                               TextButton(
@@ -431,8 +431,7 @@ class _ItemsScreenState extends State<ItemsScreen> {
                   width: double.infinity,
                   child: ElevatedButton(
                     onPressed: () async {
-                      final qty =
-                          int.tryParse(qtyController.text.trim()) ?? 0;
+                      final qty = int.tryParse(qtyController.text.trim()) ?? 0;
                       if (qty <= 0) return;
                       final price =
                           double.tryParse(priceController.text.trim()) ?? 0;
@@ -449,8 +448,7 @@ class _ItemsScreenState extends State<ItemsScreen> {
                       final updated = result['item'] as Map<String, dynamic>;
                       setState(() {
                         item.currentStock = int.tryParse(
-                                (updated['current_stock'] ??
-                                        item.currentStock)
+                                (updated['current_stock'] ?? item.currentStock)
                                     .toString()) ??
                             item.currentStock;
                         if (type == 'in') {
@@ -492,7 +490,7 @@ class _ItemsScreenState extends State<ItemsScreen> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         heroTag: 'items_add_fab',
-        onPressed: _addItem,
+        onPressed: _canAddItems ? _addItem : null,
         backgroundColor: const Color(0xFF0B4F9E),
         icon: const Icon(Icons.add_box, color: Colors.white),
         label: const Text(
@@ -635,8 +633,7 @@ class _ItemsScreenState extends State<ItemsScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('MY ITEMS',
-                    style: TextStyle(color: Colors.black54)),
+                const Text('MY ITEMS', style: TextStyle(color: Colors.black54)),
                 Text('${_filtered.length} ITEMS ADDED',
                     style: const TextStyle(color: Colors.black54)),
               ],
@@ -648,163 +645,176 @@ class _ItemsScreenState extends State<ItemsScreen> {
                 : _filtered.isEmpty
                     ? const Center(child: Text('No items yet.'))
                     : ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 90),
-                    itemCount: _filtered.length,
-                    itemBuilder: (context, index) {
-                      final item = _filtered[index];
-                      return InkWell(
-                        onTap: () async {
-                          await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => ItemDetailScreen(item: item),
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 90),
+                        itemCount: _filtered.length,
+                        itemBuilder: (context, index) {
+                          final item = _filtered[index];
+                          return InkWell(
+                            onTap: () async {
+                              await Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => ItemDetailScreen(item: item),
+                                ),
+                              );
+                              await _loadItems();
+                            },
+                            child: Card(
+                              elevation: 0,
+                              margin: const EdgeInsets.only(bottom: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: Column(
+                                  children: [
+                                    Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Container(
+                                          width: 56,
+                                          height: 56,
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFEFF2F7),
+                                            borderRadius:
+                                                BorderRadius.circular(8),
+                                            image: item.photoPath != null
+                                                ? DecorationImage(
+                                                    image: item.photoPath!
+                                                            .startsWith('http')
+                                                        ? NetworkImage(
+                                                            item.photoPath!)
+                                                        : FileImage(File(item
+                                                                .photoPath!))
+                                                            as ImageProvider,
+                                                    fit: BoxFit.cover,
+                                                  )
+                                                : null,
+                                          ),
+                                          child: item.photoPath == null
+                                              ? const Icon(
+                                                  Icons.inventory_2_outlined)
+                                              : null,
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                item.name,
+                                                style: const TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.w600),
+                                              ),
+                                              const SizedBox(height: 6),
+                                              Text('Unit: ${item.unit}',
+                                                  style: const TextStyle(
+                                                      color: Colors.black54,
+                                                      fontSize: 12)),
+                                            ],
+                                          ),
+                                        ),
+                                        if (_isLowStock(item))
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 10,
+                                              vertical: 4,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: const Color(0xFFFDEDED),
+                                              borderRadius:
+                                                  BorderRadius.circular(14),
+                                            ),
+                                            child: const Text(
+                                              'Low Stock',
+                                              style: TextStyle(
+                                                color: Colors.red,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 12),
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              const Text('Sale Price (AED)',
+                                                  style:
+                                                      TextStyle(fontSize: 12)),
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                'AED ${item.salePrice.toStringAsFixed(0)}',
+                                                style: const TextStyle(
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              const Text('Current Stock',
+                                                  style:
+                                                      TextStyle(fontSize: 12)),
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                item.currentStock.toString(),
+                                                style: TextStyle(
+                                                  color: _isLowStock(item)
+                                                      ? Colors.red
+                                                      : Colors.black,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        OutlinedButton(
+                                          onPressed: _canEditItems
+                                              ? () =>
+                                                  _openStockSheet(item, 'in')
+                                              : null,
+                                          style: OutlinedButton.styleFrom(
+                                            foregroundColor: Colors.green,
+                                            side: const BorderSide(
+                                                color: Colors.green),
+                                          ),
+                                          child: const Text('+ IN'),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        OutlinedButton(
+                                          onPressed: _canEditItems
+                                              ? () =>
+                                                  _openStockSheet(item, 'out')
+                                              : null,
+                                          style: OutlinedButton.styleFrom(
+                                            foregroundColor: Colors.red,
+                                            side: const BorderSide(
+                                                color: Colors.red),
+                                          ),
+                                          child: const Text('- OUT'),
+                                        ),
+                                      ],
+                                    )
+                                  ],
+                                ),
+                              ),
                             ),
                           );
-                          await _loadItems();
                         },
-                        child: Card(
-                        elevation: 0,
-                        margin: const EdgeInsets.only(bottom: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Column(
-                            children: [
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Container(
-                                    width: 56,
-                                    height: 56,
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFFEFF2F7),
-                                      borderRadius: BorderRadius.circular(8),
-                                      image: item.photoPath != null
-                                          ? DecorationImage(
-                                              image: item.photoPath!
-                                                      .startsWith('http')
-                                                  ? NetworkImage(
-                                                      item.photoPath!)
-                                                  : FileImage(
-                                                          File(item.photoPath!))
-                                                      as ImageProvider,
-                                              fit: BoxFit.cover,
-                                            )
-                                          : null,
-                                    ),
-                                    child: item.photoPath == null
-                                        ? const Icon(Icons.inventory_2_outlined)
-                                        : null,
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          item.name,
-                                          style: const TextStyle(
-                                              fontWeight: FontWeight.w600),
-                                        ),
-                                        const SizedBox(height: 6),
-                                        Text('Unit: ${item.unit}',
-                                            style: const TextStyle(
-                                                color: Colors.black54,
-                                                fontSize: 12)),
-                                      ],
-                                    ),
-                                  ),
-                                  if (_isLowStock(item))
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 10,
-                                        vertical: 4,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFFFDEDED),
-                                        borderRadius: BorderRadius.circular(14),
-                                      ),
-                                      child: const Text(
-                                        'Low Stock',
-                                        style: TextStyle(
-                                          color: Colors.red,
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                              const SizedBox(height: 12),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        const Text('Sale Price (AED)',
-                                            style: TextStyle(fontSize: 12)),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          'AED ${item.salePrice.toStringAsFixed(0)}',
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        const Text('Current Stock',
-                                            style: TextStyle(fontSize: 12)),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          item.currentStock.toString(),
-                                          style: TextStyle(
-                                            color: _isLowStock(item)
-                                                ? Colors.red
-                                                : Colors.black,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  OutlinedButton(
-                                    onPressed: () => _openStockSheet(item, 'in'),
-                                    style: OutlinedButton.styleFrom(
-                                      foregroundColor: Colors.green,
-                                      side: const BorderSide(
-                                          color: Colors.green),
-                                    ),
-                                    child: const Text('+ IN'),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  OutlinedButton(
-                                    onPressed: () => _openStockSheet(item, 'out'),
-                                    style: OutlinedButton.styleFrom(
-                                      foregroundColor: Colors.red,
-                                      side:
-                                          const BorderSide(color: Colors.red),
-                                    ),
-                                    child: const Text('- OUT'),
-                                  ),
-                                ],
-                              )
-                            ],
-                          ),
-                        ),
                       ),
-                      );
-                    },
-                  ),
           ),
         ],
       ),

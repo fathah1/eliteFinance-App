@@ -21,18 +21,20 @@ class _SplashScreenState extends State<SplashScreen> {
 
     if (!mounted) return;
     if (token != null && token.isNotEmpty) {
-      Navigator.pushReplacement(
+      Navigator.pushAndRemoveUntil(
         context,
         AppRoutes.onGenerateRoute(
           const RouteSettings(name: AppRoutes.home),
         ),
+        (route) => false,
       );
     } else {
-      Navigator.pushReplacement(
+      Navigator.pushAndRemoveUntil(
         context,
         AppRoutes.onGenerateRoute(
           const RouteSettings(name: AppRoutes.login),
         ),
+        (route) => false,
       );
     }
   }

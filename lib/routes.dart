@@ -7,7 +7,6 @@ import 'screens/contacts_import_screen.dart';
 import 'screens/business_switch_screen.dart';
 import 'screens/main_shell.dart';
 import 'screens/customer_ledger_screen.dart';
-import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
 import 'screens/reports_screen.dart';
@@ -15,6 +14,7 @@ import 'screens/settings_screen.dart';
 import 'screens/splash_screen.dart';
 import 'screens/supplier_ledger_screen.dart';
 import 'screens/add_item_screen.dart';
+import 'screens/create_user_screen.dart';
 
 class AppRoutes {
   static const splash = '/';
@@ -32,6 +32,7 @@ class AppRoutes {
   static const addSupplierEntry = '/suppliers/entries/add';
   static const contactsImport = '/contacts/import';
   static const addItem = '/items/add';
+  static const createUser = '/settings/create-user';
 
   static Route<dynamic> onGenerateRoute(RouteSettings routeSettings) {
     switch (routeSettings.name) {
@@ -111,6 +112,8 @@ class AppRoutes {
             initial: args['initial'] as Map<String, dynamic>?,
           ),
         );
+      case createUser:
+        return MaterialPageRoute(builder: (_) => const CreateUserScreen());
       default:
         return MaterialPageRoute(builder: (_) => const SplashScreen());
     }

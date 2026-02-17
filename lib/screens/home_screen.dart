@@ -10,6 +10,7 @@ import 'package:screenshot/screenshot.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../access_control.dart';
 import '../api.dart';
 import '../routes.dart';
 
@@ -31,6 +32,7 @@ class _HomeScreenState extends State<HomeScreen> {
   double _giveTotal = 0;
   double _getTotal = 0;
   final Map<int, DateTime> _dueMap = {};
+  Map<String, dynamic>? _user;
 
   @override
   void initState() {
@@ -42,6 +44,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final prefs = await SharedPreferences.getInstance();
     _activeBusinessServerId = prefs.getInt('active_business_server_id');
     _activeBusinessName = prefs.getString('active_business_name') ?? 'Business';
+    _user = await Api.getUser();
 
     if (_activeBusinessServerId == null) {
       await _autoSelectBusiness();
@@ -401,7 +404,8 @@ class _HomeScreenState extends State<HomeScreen> {
       pixelRatio: 2.0,
     );
     final dir = await getTemporaryDirectory();
-    final file = File('${dir.path}/payment_request_${DateTime.now().millisecondsSinceEpoch}.png');
+    final file = File(
+        '${dir.path}/payment_request_${DateTime.now().millisecondsSinceEpoch}.png');
     await file.writeAsBytes(imageBytes);
     final message = _paymentMessage(userName, userPhone, amount);
     await Share.shareXFiles([XFile(file.path)], text: message);
@@ -446,8 +450,7 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (_) {
         final amountLabel = amount.abs().toStringAsFixed(0);
         final viewPadding = MediaQuery.of(context).viewPadding;
-        final bottomInset =
-            viewPadding.bottom > 0 ? viewPadding.bottom : 8.0;
+        final bottomInset = viewPadding.bottom > 0 ? viewPadding.bottom : 8.0;
         return SafeArea(
           top: false,
           child: Padding(
@@ -570,6 +573,9 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     const brandBlue = Color(0xFF0B4F9E);
+    final canAddParties = AccessControl.canAdd(_user, 'parties');
+    final canViewReports = AccessControl.canView(_user, 'reports');
+
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -593,14 +599,16 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.bar_chart),
-            onPressed: () {
-              Navigator.push(
-                context,
-                AppRoutes.onGenerateRoute(
-                  const RouteSettings(name: AppRoutes.reports),
-                ),
-              );
-            },
+            onPressed: canViewReports
+                ? () {
+                    Navigator.push(
+                      context,
+                      AppRoutes.onGenerateRoute(
+                        const RouteSettings(name: AppRoutes.reports),
+                      ),
+                    );
+                  }
+                : null,
           ),
           IconButton(
             icon: const Icon(Icons.settings),
@@ -615,32 +623,35 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        heroTag: 'home_add_customer_fab',
-        backgroundColor: const Color(0xFFA0004A),
-        foregroundColor: Colors.white,
-        onPressed: _activeBusinessServerId == null
-            ? null
-            : () async {
-                await Navigator.push(
-                  context,
-                  AppRoutes.onGenerateRoute(
-                    RouteSettings(
-                      name: AppRoutes.contactsImport,
-                      arguments: {
-                        'mode':
-                            _tab == 'customers' ? 'customers' : 'suppliers',
-                      },
-                    ),
-                  ),
-                );
-                _loadData();
-              },
-        icon: const Icon(Icons.person_add, color: Colors.white),
-        label: Text(
-          _tab == 'customers' ? 'ADD CUSTOMER' : 'ADD SUPPLIER',
-        ),
-      ),
+      floatingActionButton: canAddParties
+          ? FloatingActionButton.extended(
+              heroTag: 'home_add_customer_fab',
+              backgroundColor: const Color(0xFFA0004A),
+              foregroundColor: Colors.white,
+              onPressed: _activeBusinessServerId == null
+                  ? null
+                  : () async {
+                      await Navigator.push(
+                        context,
+                        AppRoutes.onGenerateRoute(
+                          RouteSettings(
+                            name: AppRoutes.contactsImport,
+                            arguments: {
+                              'mode': _tab == 'customers'
+                                  ? 'customers'
+                                  : 'suppliers',
+                            },
+                          ),
+                        ),
+                      );
+                      _loadData();
+                    },
+              icon: const Icon(Icons.person_add, color: Colors.white),
+              label: Text(
+                _tab == 'customers' ? 'ADD CUSTOMER' : 'ADD SUPPLIER',
+              ),
+            )
+          : null,
       body: Column(
         children: [
           Container(
@@ -882,7 +893,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                           final phone = c['phone'] == null
                                               ? null
                                               : (c['phone'] ?? '').toString();
-                                          _showRemindSheet(name, phone, balance);
+                                          _showRemindSheet(
+                                              name, phone, balance);
                                         },
                                         style: TextButton.styleFrom(
                                           padding: EdgeInsets.zero,

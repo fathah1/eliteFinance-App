@@ -53,11 +53,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
 
       if (!mounted) return;
-      Navigator.pushReplacement(
+      Navigator.pushAndRemoveUntil(
         context,
         AppRoutes.onGenerateRoute(
           const RouteSettings(name: AppRoutes.home),
         ),
+        (route) => false,
       );
     } catch (e) {
       setState(() {

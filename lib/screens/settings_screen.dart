@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../api.dart';
+import '../access_control.dart';
 import '../routes.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -74,6 +75,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   subtitle: Text('Disabled'),
                 ),
                 const Divider(),
+                if (AccessControl.isSuperUser(_user))
+                  ListTile(
+                    title: const Text('Create User'),
+                    subtitle:
+                        const Text('Add sub users and assign access controls'),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        AppRoutes.onGenerateRoute(
+                          const RouteSettings(name: AppRoutes.createUser),
+                        ),
+                      );
+                    },
+                  ),
                 ListTile(
                   title: const Text('Logout'),
                   onTap: _logout,

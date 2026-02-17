@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../access_control.dart';
 import '../api.dart';
 import 'add_expense_screen.dart';
 import 'add_purchase_screen.dart';
@@ -48,6 +49,7 @@ class _BillsScreenState extends State<BillsScreen> {
   String _query = '';
   String _businessName = 'Business';
   bool _loading = true;
+  Map<String, dynamic>? _user;
 
   final List<_BillEntry> _entries = [];
 
@@ -86,12 +88,14 @@ class _BillsScreenState extends State<BillsScreen> {
     final prefs = await SharedPreferences.getInstance();
     final businessId = prefs.getInt('active_business_server_id');
     final businessName = prefs.getString('active_business_name')?.trim();
+    final user = await Api.getUser();
 
     if (!mounted) return;
     setState(() {
       _businessName = (businessName == null || businessName.isEmpty)
           ? 'Business'
           : businessName;
+      _user = user;
       _loading = true;
     });
 
@@ -455,6 +459,29 @@ class _BillsScreenState extends State<BillsScreen> {
   @override
   Widget build(BuildContext context) {
     const brandBlue = Color(0xFF0B4F9E);
+    final canViewSale = AccessControl.canView(_user, 'sale');
+    final canViewPurchase = AccessControl.canView(_user, 'purchase');
+    final canViewExpense = AccessControl.canView(_user, 'expense');
+    final canAddSale = AccessControl.canAdd(_user, 'sale') &&
+        AccessControl.canAdd(_user, 'bills');
+    final canAddPurchase = AccessControl.canAdd(_user, 'purchase') &&
+        AccessControl.canAdd(_user, 'bills');
+    final canAddExpense = AccessControl.canAdd(_user, 'expense') &&
+        AccessControl.canAdd(_user, 'bills');
+
+    final visibleTabs = <String>[
+      if (canViewSale) 'sale',
+      if (canViewPurchase) 'purchase',
+      if (canViewExpense) 'expense',
+    ];
+    if (visibleTabs.isEmpty) {
+      return const Scaffold(
+        body: Center(child: Text('No bills access assigned for this user.')),
+      );
+    }
+    if (!visibleTabs.contains(_tab)) {
+      _tab = visibleTabs.first;
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFFF1F3F6),
@@ -482,86 +509,76 @@ class _BillsScreenState extends State<BillsScreen> {
                   ],
                 ),
                 const SizedBox(height: 14),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _topStatCard(
-                        'AED ${_monthlySales.toStringAsFixed(0)}',
-                        'Monthly Sales',
-                        const Color(0xFF12965B),
+                SizedBox(
+                  height: 96,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _topStatCard(
+                          'AED ${_monthlySales.toStringAsFixed(0)}',
+                          'Monthly Sales',
+                          const Color(0xFF12965B),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _topStatCard(
-                        'AED ${_monthlyPurchases.toStringAsFixed(0)}',
-                        'Monthly Purchases',
-                        const Color(0xFFC6284D),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _topStatCard(
+                          'AED ${_monthlyPurchases.toStringAsFixed(0)}',
+                          'Monthly Purchases',
+                          const Color(0xFFC6284D),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(child: _reportsCard()),
-                  ],
+                      const SizedBox(width: 8),
+                      Expanded(child: _reportsCard()),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 8),
-                Card(
-                  margin: EdgeInsets.zero,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8)),
-                  child: InkWell(
-                    onTap: _openCashbook,
-                    borderRadius: BorderRadius.circular(8),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 12),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Column(
-                            children: [
-                              Text(
-                                'AED ${_todayIn.toStringAsFixed(0)}',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 18,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              const Text("Today's IN",
-                                  style: TextStyle(color: Colors.black54)),
-                            ],
+                InkWell(
+                  onTap: _openCashbook,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: _cashStat(
+                            value: 'AED ${_todayIn.toStringAsFixed(0)}',
+                            label: "Today's IN",
+                            valueColor: const Color(0xFF12965B),
                           ),
-                          Column(
-                            children: [
-                              Text(
-                                'AED ${_todayOut.toStringAsFixed(0)}',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 18,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              const Text("Today's OUT",
-                                  style: TextStyle(color: Colors.black54)),
-                            ],
+                        ),
+                        Container(
+                          width: 1,
+                          height: 42,
+                          color: const Color(0xFFE6EAF0),
+                        ),
+                        Expanded(
+                          child: _cashStat(
+                            value: 'AED ${_todayOut.toStringAsFixed(0)}',
+                            label: "Today's OUT",
+                            valueColor: const Color(0xFFC6284D),
                           ),
-                          const Text(
-                            'CASHBOOK >',
-                            style: TextStyle(
-                                color: brandBlue, fontWeight: FontWeight.w600),
-                          ),
-                        ],
-                      ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Icon(Icons.chevron_right, color: brandBlue),
+                      ],
                     ),
                   ),
                 ),
                 const SizedBox(height: 10),
                 Row(
                   children: [
-                    _billTab('sale', 'Sale'),
-                    _billTab('purchase', 'Purchase'),
-                    _billTab('expense', 'Expense'),
+                    if (canViewSale) _billTab('sale', 'Sale'),
+                    if (canViewPurchase) _billTab('purchase', 'Purchase'),
+                    if (canViewExpense) _billTab('expense', 'Expense'),
                   ],
                 ),
               ],
@@ -683,10 +700,10 @@ class _BillsScreenState extends State<BillsScreen> {
               Expanded(
                 child: ElevatedButton.icon(
                   onPressed: _tab == 'sale'
-                      ? _openSale
+                      ? (canAddSale ? _openSale : null)
                       : _tab == 'purchase'
-                          ? _openPurchase
-                          : _openExpense,
+                          ? (canAddPurchase ? _openPurchase : null)
+                          : (canAddExpense ? _openExpense : null),
                   icon: Icon(
                     _tab == 'expense'
                         ? Icons.money_off_csred_outlined
@@ -847,50 +864,88 @@ class _BillsScreenState extends State<BillsScreen> {
   }
 
   Widget _topStatCard(String value, String title, Color valueColor) {
-    return Card(
-      margin: EdgeInsets.zero,
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        child: Column(
-          children: [
-            Text(
-              value,
-              style: TextStyle(
-                  color: valueColor, fontSize: 14, fontWeight: FontWeight.w700),
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: valueColor,
+              fontSize: 17,
+              fontWeight: FontWeight.w800,
             ),
-            const SizedBox(height: 3),
-            Text(title, style: const TextStyle(color: Colors.black54)),
-          ],
-        ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Color(0xFF6A7280), fontSize: 13),
+          ),
+        ],
       ),
     );
   }
 
   Widget _reportsCard() {
-    return Card(
-      margin: EdgeInsets.zero,
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      child: const Padding(
-        padding: EdgeInsets.symmetric(vertical: 12),
-        child: Column(
-          children: [
-            Text(
-              'VIEW\nREPORTS',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Color(0xFF0B4F9E),
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            SizedBox(height: 3),
-            Icon(Icons.chevron_right, color: Color(0xFF0B4F9E)),
-          ],
-        ),
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
       ),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+      child: const Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            'View Reports',
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: Color(0xFF0B4F9E),
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          SizedBox(height: 4),
+          Icon(Icons.chevron_right, color: Color(0xFF0B4F9E)),
+        ],
+      ),
+    );
+  }
+
+  Widget _cashStat({
+    required String value,
+    required String label,
+    required Color valueColor,
+  }) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: TextStyle(
+            color: valueColor,
+            fontWeight: FontWeight.w800,
+            fontSize: 18,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          label,
+          style: const TextStyle(color: Color(0xFF6A7280), fontSize: 13),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
     );
   }
 }
