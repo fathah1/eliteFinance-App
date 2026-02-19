@@ -728,10 +728,15 @@ class _HomeScreenState extends State<HomeScreen> {
                   const Divider(height: 1),
                   InkWell(
                     onTap: () {
+                      final initialTab =
+                          _tab == 'suppliers' ? 'Supplier' : 'Customer';
                       Navigator.push(
                         context,
                         AppRoutes.onGenerateRoute(
-                          const RouteSettings(name: AppRoutes.reports),
+                          RouteSettings(
+                            name: AppRoutes.reports,
+                            arguments: {'initialTab': initialTab},
+                          ),
                         ),
                       );
                     },

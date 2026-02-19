@@ -8,6 +8,7 @@ import 'add_purchase_screen.dart';
 import 'add_sale_bill_screen.dart';
 import 'cashbook_screen.dart';
 import 'expense_detail_screen.dart';
+import '../routes.dart';
 
 class _BillEntry {
   _BillEntry({
@@ -529,7 +530,21 @@ class _BillsScreenState extends State<BillsScreen> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Expanded(child: _reportsCard()),
+                      Expanded(
+                        child: _reportsCard(
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              AppRoutes.onGenerateRoute(
+                                const RouteSettings(
+                                  name: AppRoutes.reports,
+                                  arguments: {'initialTab': 'Bills'},
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -895,30 +910,34 @@ class _BillsScreenState extends State<BillsScreen> {
     );
   }
 
-  Widget _reportsCard() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
-      child: const Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            'View Reports',
-            textAlign: TextAlign.center,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: Color(0xFF0B4F9E),
-              fontSize: 15,
-              fontWeight: FontWeight.w800,
+  Widget _reportsCard({required VoidCallback onTap}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+        child: const Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              'View Reports',
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Color(0xFF0B4F9E),
+                fontSize: 15,
+                fontWeight: FontWeight.w800,
+              ),
             ),
-          ),
-          SizedBox(height: 4),
-          Icon(Icons.chevron_right, color: Color(0xFF0B4F9E)),
-        ],
+            SizedBox(height: 4),
+            Icon(Icons.chevron_right, color: Color(0xFF0B4F9E)),
+          ],
+        ),
       ),
     );
   }

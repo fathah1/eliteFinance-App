@@ -1,7 +1,17 @@
 import 'package:flutter/material.dart';
+import 'bills_reports_screen.dart';
+import 'customer_transactions_report_screen.dart';
+import 'day_wise_report_screen.dart';
+import 'inventory_reports_screen.dart';
+import 'supplier_transactions_report_screen.dart';
 
 class ReportsScreen extends StatefulWidget {
-  const ReportsScreen({super.key});
+  const ReportsScreen({
+    super.key,
+    this.initialTab = 'All',
+  });
+
+  final String initialTab;
 
   @override
   State<ReportsScreen> createState() => _ReportsScreenState();
@@ -149,12 +159,128 @@ class _ReportsScreenState extends State<ReportsScreen> {
     ),
   ];
 
+  @override
+  void initState() {
+    super.initState();
+    if (_tabs.contains(widget.initialTab)) {
+      _selected = widget.initialTab;
+    }
+  }
+
   List<_ReportSection> get _visibleSections {
     if (_selected == 'All') return _sections;
     return _sections.where((s) => s.category == _selected).toList();
   }
 
   void _openReport(_ReportItem item) {
+    if (item.title == 'Customer Transactions report') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const CustomerTransactionsReportScreen(),
+        ),
+      );
+      return;
+    }
+    if (item.title == 'Customer list pdf') {
+      exportCustomerListPdfReport(context);
+      return;
+    }
+    if (item.title == 'Supplier Transactions report') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const SupplierTransactionsReportScreen(),
+        ),
+      );
+      return;
+    }
+    if (item.title == 'Supplier list pdf') {
+      exportSupplierListPdfReport(context);
+      return;
+    }
+    if (item.title == 'Sales Report') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const BillsReportScreen(type: BillReportType.sales),
+        ),
+      );
+      return;
+    }
+    if (item.title == 'Purchase Report') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) =>
+              const BillsReportScreen(type: BillReportType.purchase),
+        ),
+      );
+      return;
+    }
+    if (item.title == 'Cashbook Report') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) =>
+              const BillsReportScreen(type: BillReportType.cashbook),
+        ),
+      );
+      return;
+    }
+    if (item.title == 'Sales Day-wise Report') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) =>
+              const DayWiseReportScreen(type: DayWiseReportType.sales),
+        ),
+      );
+      return;
+    }
+    if (item.title == 'Purchase Day-wise Report') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) =>
+              const DayWiseReportScreen(type: DayWiseReportType.purchase),
+        ),
+      );
+      return;
+    }
+    if (item.title == 'Stock Summary') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const InventoryReportsScreen(
+            type: InventoryReportType.stockSummary,
+          ),
+        ),
+      );
+      return;
+    }
+    if (item.title == 'Low Stock Summary Report') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const InventoryReportsScreen(
+            type: InventoryReportType.lowStockSummary,
+          ),
+        ),
+      );
+      return;
+    }
+    if (item.title == 'Profit & Loss Report') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const InventoryReportsScreen(
+            type: InventoryReportType.profitLoss,
+          ),
+        ),
+      );
+      return;
+    }
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -170,12 +296,13 @@ class _ReportsScreenState extends State<ReportsScreen> {
       appBar: AppBar(
         title: const Text('View Reports'),
         backgroundColor: _brandBlue,
+        foregroundColor: Colors.white,
       ),
       body: Column(
         children: [
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           SizedBox(
-            height: 52,
+            height: 44,
             child: ListView.separated(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               scrollDirection: Axis.horizontal,
@@ -184,12 +311,12 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 final selected = tab == _selected;
                 return InkWell(
                   onTap: () => setState(() => _selected = tab),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 22),
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
                     decoration: BoxDecoration(
                       color: selected ? const Color(0xFFEAF2FF) : Colors.white,
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(10),
                       border: Border.all(
                         color: selected
                             ? const Color(0xFF4A90E2)
@@ -201,18 +328,18 @@ class _ReportsScreenState extends State<ReportsScreen> {
                       tab,
                       style: TextStyle(
                         color: selected ? _brandBlue : Colors.black87,
-                        fontSize: 16,
+                        fontSize: 15,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
                 );
               },
-              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
               itemCount: _tabs.length,
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           Expanded(
             child: ListView.builder(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
@@ -221,11 +348,18 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 final section = _visibleSections[index];
                 return Container(
                   margin: const EdgeInsets.only(bottom: 12),
-                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 4),
+                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 6),
                   decoration: BoxDecoration(
                     color: Colors.white,
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: const Color(0xFFDADFE6)),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x12000000),
+                        blurRadius: 8,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -233,7 +367,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                       Text(
                         section.title,
                         style: const TextStyle(
-                          fontSize: 22,
+                          fontSize: 18,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -247,18 +381,21 @@ class _ReportsScreenState extends State<ReportsScreen> {
                               leading: Icon(item.icon, color: _brandBlue),
                               title: Text(
                                 item.title,
-                                style: const TextStyle(fontSize: 20),
+                                style: const TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w500,
+                                ),
                               ),
                               subtitle: Text(
                                 item.subtitle,
                                 style: const TextStyle(
                                   color: Color(0xFF7A828F),
-                                  fontSize: 15,
+                                  fontSize: 14,
                                 ),
                               ),
                               trailing: const Icon(
                                 Icons.chevron_right,
-                                size: 30,
+                                size: 24,
                               ),
                               onTap: () => _openReport(item),
                             ),

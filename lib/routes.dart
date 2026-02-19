@@ -34,6 +34,14 @@ class AppRoutes {
   static const addItem = '/items/add';
   static const createUser = '/settings/create-user';
 
+  static Map<String, dynamic> _args(RouteSettings routeSettings) {
+    final raw = routeSettings.arguments;
+    if (raw is Map) {
+      return Map<String, dynamic>.from(raw);
+    }
+    return <String, dynamic>{};
+  }
+
   static Route<dynamic> onGenerateRoute(RouteSettings routeSettings) {
     switch (routeSettings.name) {
       case splash:
@@ -45,8 +53,7 @@ class AppRoutes {
       case home:
         return MaterialPageRoute(builder: (_) => const MainShell());
       case addCustomer:
-        final args =
-            (routeSettings.arguments ?? const {}) as Map<String, dynamic>;
+        final args = _args(routeSettings);
         return MaterialPageRoute(
           builder: (_) => AddCustomerScreen(
             initialName: args['name'] as String?,
@@ -54,12 +61,12 @@ class AppRoutes {
           ),
         );
       case customerLedger:
-        final args = routeSettings.arguments as Map<String, dynamic>;
+        final args = _args(routeSettings);
         return MaterialPageRoute(
           builder: (_) => CustomerLedgerScreen(customer: args),
         );
       case addEntry:
-        final args = routeSettings.arguments as Map<String, dynamic>;
+        final args = _args(routeSettings);
         return MaterialPageRoute(
           builder: (_) => AddEntryScreen(
             customerId: args['customerId'] as int,
@@ -68,14 +75,18 @@ class AppRoutes {
           ),
         );
       case reports:
-        return MaterialPageRoute(builder: (_) => const ReportsScreen());
+        final args = _args(routeSettings);
+        return MaterialPageRoute(
+          builder: (_) => ReportsScreen(
+            initialTab: (args['initialTab'] ?? 'All').toString(),
+          ),
+        );
       case settings:
         return MaterialPageRoute(builder: (_) => const SettingsScreen());
       case businesses:
         return MaterialPageRoute(builder: (_) => const BusinessSwitchScreen());
       case addSupplier:
-        final args =
-            (routeSettings.arguments ?? const {}) as Map<String, dynamic>;
+        final args = _args(routeSettings);
         return MaterialPageRoute(
           builder: (_) => AddSupplierScreen(
             initialName: args['name'] as String?,
@@ -83,12 +94,12 @@ class AppRoutes {
           ),
         );
       case supplierLedger:
-        final args = routeSettings.arguments as Map<String, dynamic>;
+        final args = _args(routeSettings);
         return MaterialPageRoute(
           builder: (_) => SupplierLedgerScreen(supplier: args),
         );
       case addSupplierEntry:
-        final args = routeSettings.arguments as Map<String, dynamic>;
+        final args = _args(routeSettings);
         return MaterialPageRoute(
           builder: (_) => AddSupplierEntryScreen(
             supplierId: args['supplierId'] as int,
@@ -97,15 +108,14 @@ class AppRoutes {
           ),
         );
       case contactsImport:
-        final args = routeSettings.arguments as Map<String, dynamic>;
+        final args = _args(routeSettings);
         return MaterialPageRoute(
           builder: (_) => ContactsImportScreen(
-            mode: args['mode'] as String,
+            mode: (args['mode'] ?? 'customers').toString(),
           ),
         );
       case addItem:
-        final args =
-            (routeSettings.arguments ?? const {}) as Map<String, dynamic>;
+        final args = _args(routeSettings);
         return MaterialPageRoute(
           builder: (_) => AddItemScreen(
             type: args['type'] as String? ?? 'product',

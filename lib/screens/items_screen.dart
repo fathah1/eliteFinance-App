@@ -74,6 +74,18 @@ class _ItemsScreenState extends State<ItemsScreen> {
     return _items.where((i) => i.type == _tab && _isLowStock(i)).length;
   }
 
+  void _openInventoryReports() {
+    Navigator.push(
+      context,
+      AppRoutes.onGenerateRoute(
+        const RouteSettings(
+          name: AppRoutes.reports,
+          arguments: {'initialTab': 'Inventory'},
+        ),
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -517,62 +529,90 @@ class _ItemsScreenState extends State<ItemsScreen> {
                 const SizedBox(height: 12),
                 Card(
                   elevation: 0,
+                  color: Colors.white,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(color: Colors.blueGrey.shade50),
                   ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+                    child: Row(
+                      children: [
+                        Expanded(
                           child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('AED ${_totalStockValue.toStringAsFixed(0)}',
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold)),
+                              const Text(
+                                'Total Stock Value',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF6E7784),
+                                ),
+                              ),
                               const SizedBox(height: 4),
-                              const Text('Total Stock value',
-                                  style: TextStyle(fontSize: 12)),
+                              Text(
+                                'AED ${_totalStockValue.toStringAsFixed(0)}',
+                                style: const TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
                             ],
                           ),
                         ),
-                      ),
-                      const VerticalDivider(width: 1),
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Column(
-                            children: [
-                              Text('$_lowStockCount',
-                                  style: const TextStyle(
-                                      color: Colors.red,
-                                      fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 4),
-                              const Text('Low Stock Items',
-                                  style: TextStyle(fontSize: 12)),
-                            ],
-                          ),
+                        Container(
+                          width: 1,
+                          height: 38,
+                          color: const Color(0xFFE6EBF2),
                         ),
-                      ),
-                      const VerticalDivider(width: 1),
-                      Expanded(
-                        child: InkWell(
-                          onTap: () {},
+                        Expanded(
                           child: Padding(
-                            padding: const EdgeInsets.all(12),
+                            padding: const EdgeInsets.only(left: 12),
                             child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text('VIEW REPORTS',
-                                    style: TextStyle(
-                                        color: brandBlue,
-                                        fontWeight: FontWeight.bold)),
-                                Icon(Icons.chevron_right, color: brandBlue),
+                                const Text(
+                                  'Low Stock Items',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Color(0xFF6E7784),
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  '$_lowStockCount',
+                                  style: const TextStyle(
+                                    color: Color(0xFFD32F2F),
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 8),
+                        OutlinedButton.icon(
+                          onPressed: _openInventoryReports,
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: brandBlue),
+                            foregroundColor: brandBlue,
+                            minimumSize: const Size(0, 40),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          icon: const Icon(Icons.analytics_outlined, size: 16),
+                          label: const Text(
+                            'View Reports',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],
