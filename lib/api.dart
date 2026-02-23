@@ -7,6 +7,25 @@ class Api {
   static const String baseUrl =
       'https://eliteposs.com/financeserver/public/api';
 
+  static List<dynamic> _onlyLive(List<dynamic> rows) {
+    return rows.where((row) {
+      if (row is Map) {
+        final status = (row['del_status'] ?? 'live').toString().toLowerCase();
+        return status == 'live';
+      }
+      return true;
+    }).toList();
+  }
+
+  static List<dynamic> _extractLiveList(dynamic decoded) {
+    if (decoded is List) return _onlyLive(decoded);
+    if (decoded is Map<String, dynamic>) {
+      final data = decoded['data'];
+      if (data is List) return _onlyLive(data);
+    }
+    return const [];
+  }
+
   static Future<String?> getToken() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString('token');
@@ -179,7 +198,7 @@ class Api {
       throw Exception('Fetch businesses failed: ${res.body}');
     }
 
-    return jsonDecode(res.body) as List<dynamic>;
+    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<Map<String, dynamic>> createBusiness({
@@ -204,6 +223,20 @@ class Api {
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
+  static Future<void> deleteBusiness(int businessId) async {
+    final token = await getToken();
+    final res = await http.delete(
+      Uri.parse('$baseUrl/businesses/$businessId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Delete business failed: ${res.body}');
+    }
+  }
+
   static Future<List<dynamic>> getCustomers({
     required int businessId,
   }) async {
@@ -220,7 +253,7 @@ class Api {
       throw Exception('Fetch customers failed: ${res.body}');
     }
 
-    return jsonDecode(res.body) as List<dynamic>;
+    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<Map<String, dynamic>> createCustomer({
@@ -247,6 +280,20 @@ class Api {
       throw Exception('Create customer failed: ${res.body}');
     }
     return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static Future<void> deleteCustomer(int customerId) async {
+    final token = await getToken();
+    final res = await http.delete(
+      Uri.parse('$baseUrl/customers/$customerId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Delete customer failed: ${res.body}');
+    }
   }
 
   static Future<Map<String, dynamic>> createTransaction({
@@ -346,7 +393,7 @@ class Api {
       throw Exception('Fetch transactions failed: ${res.body}');
     }
 
-    return jsonDecode(res.body) as List<dynamic>;
+    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<List<dynamic>> getSuppliers({
@@ -365,7 +412,7 @@ class Api {
       throw Exception('Fetch suppliers failed: ${res.body}');
     }
 
-    return jsonDecode(res.body) as List<dynamic>;
+    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<Map<String, dynamic>> createSupplier({
@@ -394,6 +441,20 @@ class Api {
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
+  static Future<void> deleteSupplier(int supplierId) async {
+    final token = await getToken();
+    final res = await http.delete(
+      Uri.parse('$baseUrl/suppliers/$supplierId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Delete supplier failed: ${res.body}');
+    }
+  }
+
   static Future<List<dynamic>> getAllSupplierTransactions({
     required int businessId,
   }) async {
@@ -410,7 +471,7 @@ class Api {
       throw Exception('Fetch supplier transactions failed: ${res.body}');
     }
 
-    return jsonDecode(res.body) as List<dynamic>;
+    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<List<dynamic>> getSupplierTransactions({
@@ -429,7 +490,7 @@ class Api {
       throw Exception('Fetch supplier transactions failed: ${res.body}');
     }
 
-    return jsonDecode(res.body) as List<dynamic>;
+    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<Map<String, dynamic>> createSupplierTransaction({
@@ -529,7 +590,7 @@ class Api {
       throw Exception('Fetch customer transactions failed: ${res.body}');
     }
 
-    return jsonDecode(res.body) as List<dynamic>;
+    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<List<dynamic>> getItems({
@@ -549,7 +610,7 @@ class Api {
       throw Exception('Fetch items failed: ${res.body}');
     }
 
-    return jsonDecode(res.body) as List<dynamic>;
+    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<Map<String, dynamic>> createItem({
@@ -719,13 +780,7 @@ class Api {
     if (res.statusCode != 200) {
       throw Exception('Fetch sales failed: ${res.body}');
     }
-    final decoded = jsonDecode(res.body);
-    if (decoded is List) return decoded;
-    if (decoded is Map<String, dynamic>) {
-      final data = decoded['data'];
-      if (data is List) return data;
-    }
-    throw Exception('Unexpected sales response format: ${res.body}');
+    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<Map<String, dynamic>> createSale({
@@ -799,6 +854,121 @@ class Api {
     return jsonDecode(body) as Map<String, dynamic>;
   }
 
+  static Future<void> deleteSale(int saleId) async {
+    final token = await getToken();
+    final res = await http.delete(
+      Uri.parse('$baseUrl/sales/$saleId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Delete sale failed: ${res.body}');
+    }
+  }
+
+  static Future<Map<String, dynamic>> createSaleReturn({
+    required int businessId,
+    required int returnNumber,
+    required String date,
+    int? saleId,
+    int? customerId,
+    required String settlementMode, // credit_party|cash|card
+    double? manualAmount,
+    List<Map<String, dynamic>>? items,
+  }) async {
+    final token = await getToken();
+    final res = await http.post(
+      Uri.parse('$baseUrl/sales/returns'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'business_id': businessId,
+        'return_number': returnNumber,
+        'date': date,
+        'sale_id': saleId,
+        'customer_id': customerId,
+        'settlement_mode': settlementMode,
+        'manual_amount': manualAmount,
+        'items': items ?? const [],
+      }),
+    );
+    if (res.statusCode != 201) {
+      throw Exception('Create sale return failed: ${res.body}');
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> createSalePayment({
+    required int businessId,
+    required int paymentNumber,
+    required String date,
+    required int customerId,
+    required double amount,
+    required String paymentMode, // cash|card
+    String? note,
+    List<int>? saleIds,
+  }) async {
+    final token = await getToken();
+    final res = await http.post(
+      Uri.parse('$baseUrl/sales/payments'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'business_id': businessId,
+        'payment_number': paymentNumber,
+        'date': date,
+        'customer_id': customerId,
+        'amount': amount,
+        'payment_mode': paymentMode,
+        'note': note,
+        'sale_ids': saleIds ?? const [],
+      }),
+    );
+    if (res.statusCode != 201) {
+      throw Exception('Create sale payment failed: ${res.body}');
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static Future<List<dynamic>> getSaleReturns({
+    required int businessId,
+  }) async {
+    final token = await getToken();
+    final res = await http.get(
+      Uri.parse('$baseUrl/sales/returns?business_id=$businessId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Fetch sale returns failed: ${res.body}');
+    }
+    return _extractLiveList(jsonDecode(res.body));
+  }
+
+  static Future<void> deleteSaleReturn(int saleReturnId) async {
+    final token = await getToken();
+    final res = await http.delete(
+      Uri.parse('$baseUrl/sales/returns/$saleReturnId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Delete sale return failed: ${res.body}');
+    }
+  }
+
   static Future<List<dynamic>> getPurchases({
     required int businessId,
   }) async {
@@ -815,13 +985,7 @@ class Api {
       throw Exception('Fetch purchases failed: ${res.body}');
     }
 
-    final decoded = jsonDecode(res.body);
-    if (decoded is List) return decoded;
-    if (decoded is Map<String, dynamic>) {
-      final data = decoded['data'];
-      if (data is List) return data;
-    }
-    throw Exception('Unexpected purchases response format: ${res.body}');
+    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<Map<String, dynamic>> createPurchase({
@@ -895,6 +1059,121 @@ class Api {
     return jsonDecode(body) as Map<String, dynamic>;
   }
 
+  static Future<void> deletePurchase(int purchaseId) async {
+    final token = await getToken();
+    final res = await http.delete(
+      Uri.parse('$baseUrl/purchases/$purchaseId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Delete purchase failed: ${res.body}');
+    }
+  }
+
+  static Future<Map<String, dynamic>> createPurchaseReturn({
+    required int businessId,
+    required int returnNumber,
+    required String date,
+    int? purchaseId,
+    int? supplierId,
+    required String settlementMode, // credit_party|cash|card
+    double? manualAmount,
+    List<Map<String, dynamic>>? items,
+  }) async {
+    final token = await getToken();
+    final res = await http.post(
+      Uri.parse('$baseUrl/purchases/returns'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'business_id': businessId,
+        'return_number': returnNumber,
+        'date': date,
+        'purchase_id': purchaseId,
+        'supplier_id': supplierId,
+        'settlement_mode': settlementMode,
+        'manual_amount': manualAmount,
+        'items': items ?? const [],
+      }),
+    );
+    if (res.statusCode != 201) {
+      throw Exception('Create purchase return failed: ${res.body}');
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> createPurchasePayment({
+    required int businessId,
+    required int paymentNumber,
+    required String date,
+    required int supplierId,
+    required double amount,
+    required String paymentMode, // cash|card
+    String? note,
+    List<int>? purchaseIds,
+  }) async {
+    final token = await getToken();
+    final res = await http.post(
+      Uri.parse('$baseUrl/purchases/payments'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'business_id': businessId,
+        'payment_number': paymentNumber,
+        'date': date,
+        'supplier_id': supplierId,
+        'amount': amount,
+        'payment_mode': paymentMode,
+        'note': note,
+        'purchase_ids': purchaseIds ?? const [],
+      }),
+    );
+    if (res.statusCode != 201) {
+      throw Exception('Create purchase payment failed: ${res.body}');
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static Future<List<dynamic>> getPurchaseReturns({
+    required int businessId,
+  }) async {
+    final token = await getToken();
+    final res = await http.get(
+      Uri.parse('$baseUrl/purchases/returns?business_id=$businessId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Fetch purchase returns failed: ${res.body}');
+    }
+    return _extractLiveList(jsonDecode(res.body));
+  }
+
+  static Future<void> deletePurchaseReturn(int purchaseReturnId) async {
+    final token = await getToken();
+    final res = await http.delete(
+      Uri.parse('$baseUrl/purchases/returns/$purchaseReturnId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Delete purchase return failed: ${res.body}');
+    }
+  }
+
   static Future<List<dynamic>> getExpenseCategories({
     required int businessId,
   }) async {
@@ -909,7 +1188,7 @@ class Api {
     if (res.statusCode != 200) {
       throw Exception('Fetch expense categories failed: ${res.body}');
     }
-    return jsonDecode(res.body) as List<dynamic>;
+    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<Map<String, dynamic>> createExpenseCategory({
@@ -949,13 +1228,7 @@ class Api {
     if (res.statusCode != 200) {
       throw Exception('Fetch expenses failed: ${res.body}');
     }
-    final decoded = jsonDecode(res.body);
-    if (decoded is List) return decoded;
-    if (decoded is Map<String, dynamic>) {
-      final data = decoded['data'];
-      if (data is List) return data;
-    }
-    throw Exception('Unexpected expenses response format: ${res.body}');
+    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<Map<String, dynamic>> createExpense({
@@ -965,6 +1238,7 @@ class Api {
     int? categoryId,
     String? categoryName,
     required double manualAmount,
+    bool applyTax = false,
     required List<Map<String, dynamic>> items,
   }) async {
     final token = await getToken();
@@ -982,6 +1256,7 @@ class Api {
         'category_id': categoryId,
         'category_name': categoryName,
         'manual_amount': manualAmount,
+        'apply_tax': applyTax,
         'items': items,
       }),
     );
@@ -1005,7 +1280,7 @@ class Api {
     if (res.statusCode != 200) {
       throw Exception('Fetch expense items failed: ${res.body}');
     }
-    return jsonDecode(res.body) as List<dynamic>;
+    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<Map<String, dynamic>> createExpenseItem({
@@ -1057,6 +1332,20 @@ class Api {
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
+  static Future<void> deleteExpenseItem(int id) async {
+    final token = await getToken();
+    final res = await http.delete(
+      Uri.parse('$baseUrl/expense-items/$id'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Delete expense item failed: ${res.body}');
+    }
+  }
+
   static Future<Map<String, dynamic>> getExpense({
     required int id,
   }) async {
@@ -1081,6 +1370,7 @@ class Api {
     int? categoryId,
     String? categoryName,
     required double manualAmount,
+    bool applyTax = false,
     required List<Map<String, dynamic>> items,
   }) async {
     final token = await getToken();
@@ -1097,6 +1387,7 @@ class Api {
         'category_id': categoryId,
         'category_name': categoryName,
         'manual_amount': manualAmount,
+        'apply_tax': applyTax,
         'items': items,
       }),
     );

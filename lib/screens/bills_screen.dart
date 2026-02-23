@@ -4,6 +4,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../access_control.dart';
 import '../api.dart';
 import 'add_expense_screen.dart';
+import 'add_bill_payment_screen.dart';
+import 'add_bill_return_screen.dart';
 import 'add_purchase_screen.dart';
 import 'add_sale_bill_screen.dart';
 import 'cashbook_screen.dart';
@@ -85,6 +87,18 @@ class _BillsScreenState extends State<BillsScreen> {
     return maxNo + 1;
   }
 
+  int _nextNoFromPrefix(String prefix) {
+    final re = RegExp('^${RegExp.escape(prefix)} #(\\d+)');
+    var maxNo = 0;
+    for (final e in _entries) {
+      final m = re.firstMatch(e.label);
+      if (m == null) continue;
+      final n = int.tryParse(m.group(1) ?? '');
+      if (n != null && n > maxNo) maxNo = n;
+    }
+    return maxNo + 1;
+  }
+
   Future<void> _loadAll() async {
     final prefs = await SharedPreferences.getInstance();
     final businessId = prefs.getInt('active_business_server_id');
@@ -115,7 +129,26 @@ class _BillsScreenState extends State<BillsScreen> {
     try {
       final sales = await Api.getSales(businessId: businessId);
       final purchases = await Api.getPurchases(businessId: businessId);
+      final saleReturns = await Api.getSaleReturns(businessId: businessId);
+      final purchaseReturns = await Api.getPurchaseReturns(businessId: businessId);
       final expenses = await Api.getExpenses(businessId: businessId);
+      final allCustomerTx = await Api.getAllTransactions(businessId: businessId);
+      final allSupplierTx = await Api.getAllSupplierTransactions(businessId: businessId);
+      final customers = await Api.getCustomers(businessId: businessId);
+      final suppliers = await Api.getSuppliers(businessId: businessId);
+
+      final customerNameById = <int, String>{
+        for (final c in customers)
+          _toInt((c as Map)['id']): (((c)['name'] ?? '').toString().trim().isEmpty)
+              ? 'Customer'
+              : ((c)['name'] ?? '').toString(),
+      };
+      final supplierNameById = <int, String>{
+        for (final s in suppliers)
+          _toInt((s as Map)['id']): (((s)['name'] ?? '').toString().trim().isEmpty)
+              ? 'Supplier'
+              : ((s)['name'] ?? '').toString(),
+      };
 
       final mapped = <_BillEntry>[];
 
@@ -129,7 +162,6 @@ class _BillsScreenState extends State<BillsScreen> {
             ? 'Walk-in Sale'
             : (m['party_name'] ?? '').toString();
         final total = _toDouble(m['total_amount']);
-        final received = _toDouble(m['received_amount']);
         final mode = (m['payment_mode'] ?? 'unpaid').toString();
         final unpaid = mode == 'unpaid';
 
@@ -149,22 +181,6 @@ class _BillsScreenState extends State<BillsScreen> {
           ),
         );
 
-        if (received > 0) {
-          mapped.add(
-            _BillEntry(
-              id: id,
-              type: 'payment_in',
-              partyName: party,
-              label: 'Payment In #$number',
-              billNumber: number,
-              date: date,
-              amount: received,
-              paymentMode: mode,
-              paymentStatusLabel: mode == 'card' ? 'Card' : 'Cash',
-              statusColor: Colors.black87,
-            ),
-          );
-        }
       }
 
       for (final raw in purchases) {
@@ -177,7 +193,6 @@ class _BillsScreenState extends State<BillsScreen> {
             ? 'Walk-in Purchase'
             : (m['party_name'] ?? '').toString();
         final total = _toDouble(m['total_amount']);
-        final paid = _toDouble(m['paid_amount']);
         final mode = (m['payment_mode'] ?? 'unpaid').toString();
         final unpaid = mode == 'unpaid';
 
@@ -197,22 +212,6 @@ class _BillsScreenState extends State<BillsScreen> {
           ),
         );
 
-        if (paid > 0) {
-          mapped.add(
-            _BillEntry(
-              id: id,
-              type: 'payment_out',
-              partyName: party,
-              label: 'Payment Out #$number',
-              billNumber: number,
-              date: date,
-              amount: paid,
-              paymentMode: mode,
-              paymentStatusLabel: mode == 'card' ? 'Card' : 'Cash',
-              statusColor: Colors.black87,
-            ),
-          );
-        }
       }
 
       for (final raw in expenses) {
@@ -251,6 +250,120 @@ class _BillsScreenState extends State<BillsScreen> {
         );
       }
 
+      for (final raw in saleReturns) {
+        final m = Map<String, dynamic>.from(raw as Map);
+        final id = _toInt(m['id']);
+        final number = _toInt(m['return_number']);
+        final date =
+            DateTime.tryParse((m['date'] ?? '').toString()) ?? DateTime.now();
+        final customerId = _toInt(m['customer_id']);
+        final party = customerNameById[customerId] ??
+            (((m['note'] ?? '').toString().trim().isEmpty)
+                ? 'Customer'
+                : (m['note'] ?? '').toString());
+        final total = _toDouble(m['total_amount']);
+        final mode = (m['settlement_mode'] ?? '').toString();
+
+        mapped.add(
+          _BillEntry(
+            id: id,
+            type: 'sale_return',
+            partyName: party,
+            label: 'Sale Return #$number',
+            billNumber: number,
+            date: date,
+            amount: total,
+            paymentMode: mode,
+            paymentStatusLabel:
+                mode == 'credit_party' ? 'Credit to Party' : 'Refund',
+            statusColor: const Color(0xFFA88E1F),
+          ),
+        );
+      }
+
+      for (final raw in purchaseReturns) {
+        final m = Map<String, dynamic>.from(raw as Map);
+        final id = _toInt(m['id']);
+        final number = _toInt(m['return_number']);
+        final date =
+            DateTime.tryParse((m['date'] ?? '').toString()) ?? DateTime.now();
+        final supplierId = _toInt(m['supplier_id']);
+        final party = supplierNameById[supplierId] ??
+            (((m['note'] ?? '').toString().trim().isEmpty)
+                ? 'Supplier'
+                : (m['note'] ?? '').toString());
+        final total = _toDouble(m['total_amount']);
+        final mode = (m['settlement_mode'] ?? '').toString();
+
+        mapped.add(
+          _BillEntry(
+            id: id,
+            type: 'purchase_return',
+            partyName: party,
+            label: 'Purchase Return #$number',
+            billNumber: number,
+            date: date,
+            amount: total,
+            paymentMode: mode,
+            paymentStatusLabel:
+                mode == 'credit_party' ? 'Credit from Supplier' : 'Refund',
+            statusColor: const Color(0xFFA88E1F),
+          ),
+        );
+      }
+
+      final paymentNoRegex = RegExp('#(\\d+)');
+
+      for (final raw in allCustomerTx) {
+        final m = Map<String, dynamic>.from(raw as Map);
+        final note = (m['note'] ?? '').toString();
+        if (!note.startsWith('Payment In #')) continue;
+        final parsedNo = paymentNoRegex.firstMatch(note);
+        final n = int.tryParse(parsedNo?.group(1) ?? '') ?? 0;
+        final customerId = _toInt(m['customer_id']);
+        final date =
+            DateTime.tryParse((m['created_at'] ?? '').toString()) ?? DateTime.now();
+        mapped.add(
+          _BillEntry(
+            id: _toInt(m['id']),
+            type: 'payment_in',
+            partyName: customerNameById[customerId] ?? 'Customer',
+            label: n > 0 ? 'Payment In #$n' : 'Payment In',
+            billNumber: n,
+            date: date,
+            amount: _toDouble(m['amount']),
+            paymentMode: note.toLowerCase().contains('card') ? 'card' : 'cash',
+            paymentStatusLabel: note.toLowerCase().contains('card') ? 'Card' : 'Cash',
+            statusColor: Colors.black87,
+          ),
+        );
+      }
+
+      for (final raw in allSupplierTx) {
+        final m = Map<String, dynamic>.from(raw as Map);
+        final note = (m['note'] ?? '').toString();
+        if (!note.startsWith('Payment Out #')) continue;
+        final parsedNo = paymentNoRegex.firstMatch(note);
+        final n = int.tryParse(parsedNo?.group(1) ?? '') ?? 0;
+        final supplierId = _toInt(m['supplier_id']);
+        final date =
+            DateTime.tryParse((m['created_at'] ?? '').toString()) ?? DateTime.now();
+        mapped.add(
+          _BillEntry(
+            id: _toInt(m['id']),
+            type: 'payment_out',
+            partyName: supplierNameById[supplierId] ?? 'Supplier',
+            label: n > 0 ? 'Payment Out #$n' : 'Payment Out',
+            billNumber: n,
+            date: date,
+            amount: _toDouble(m['amount']),
+            paymentMode: note.toLowerCase().contains('card') ? 'card' : 'cash',
+            paymentStatusLabel: note.toLowerCase().contains('card') ? 'Card' : 'Cash',
+            statusColor: Colors.black87,
+          ),
+        );
+      }
+
       mapped.sort((a, b) => b.date.compareTo(a.date));
 
       if (!mounted) return;
@@ -274,10 +387,11 @@ class _BillsScreenState extends State<BillsScreen> {
   List<_BillEntry> get _filtered {
     Iterable<_BillEntry> rows;
     if (_tab == 'sale') {
-      rows = _entries.where((e) => e.type == 'sale' || e.type == 'payment_in');
+      rows = _entries.where(
+          (e) => e.type == 'sale' || e.type == 'payment_in' || e.type == 'sale_return');
     } else if (_tab == 'purchase') {
       rows = _entries
-          .where((e) => e.type == 'purchase' || e.type == 'payment_out');
+          .where((e) => e.type == 'purchase' || e.type == 'payment_out' || e.type == 'purchase_return');
     } else {
       rows = _entries.where((e) => e.type == 'expense');
     }
@@ -358,6 +472,44 @@ class _BillsScreenState extends State<BillsScreen> {
     if (draft?.saved == true) await _loadAll();
   }
 
+  Future<void> _openReturnActions(_BillEntry entry) async {
+    final isSaleReturn = entry.type == 'sale_return';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Delete Return'),
+        content: Text(
+          'Soft delete ${isSaleReturn ? 'Sale Return' : 'Purchase Return'} #${entry.billNumber}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    try {
+      if (isSaleReturn) {
+        await Api.deleteSaleReturn(entry.id);
+      } else {
+        await Api.deletePurchaseReturn(entry.id);
+      }
+      await _loadAll();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Delete failed: $e')),
+      );
+    }
+  }
+
   void _openCashbook() {
     final rows = _entries
         .where((e) =>
@@ -388,6 +540,13 @@ class _BillsScreenState extends State<BillsScreen> {
   }
 
   Future<void> _openMoreSheet() async {
+    final nextReturnNo = _nextNoFromPrefix(
+      _tab == 'purchase' ? 'Purchase Return' : 'Sale Return',
+    );
+    final nextPaymentNo = _nextNoFromPrefix(
+      _tab == 'purchase' ? 'Payment Out' : 'Payment In',
+    );
+
     await showModalBottomSheet<void>(
       context: context,
       useSafeArea: true,
@@ -408,6 +567,14 @@ class _BillsScreenState extends State<BillsScreen> {
                     label: _tab == 'purchase' ? 'Purchase' : 'Sale',
                     bg: const Color(0xFFE9F5ED),
                     fg: const Color(0xFF12965B),
+                    onTap: () {
+                      Navigator.pop(context);
+                      if (_tab == 'purchase') {
+                        _openPurchase();
+                      } else {
+                        _openSale();
+                      }
+                    },
                   ),
                   _MoreAction(
                     icon: Icons.assignment_return_outlined,
@@ -415,6 +582,21 @@ class _BillsScreenState extends State<BillsScreen> {
                         _tab == 'purchase' ? 'Purchase Return' : 'Sale Return',
                     bg: const Color(0xFFF9F6DE),
                     fg: const Color(0xFFA88E1F),
+                    onTap: () async {
+                      Navigator.pop(context);
+                      final ok = await Navigator.push<bool>(
+                        this.context,
+                        MaterialPageRoute(
+                          builder: (_) => AddBillReturnScreen(
+                            isPurchase: _tab == 'purchase',
+                            returnNumber: nextReturnNo <= 0 ? 1 : nextReturnNo,
+                          ),
+                        ),
+                      );
+                      if (ok == true) {
+                        _loadAll();
+                      }
+                    },
                   ),
                   _MoreAction(
                     icon: Icons.currency_exchange,
@@ -425,6 +607,21 @@ class _BillsScreenState extends State<BillsScreen> {
                     fg: _tab == 'purchase'
                         ? const Color(0xFFC2185B)
                         : const Color(0xFF12965B),
+                    onTap: () async {
+                      Navigator.pop(context);
+                      final ok = await Navigator.push<bool>(
+                        this.context,
+                        MaterialPageRoute(
+                          builder: (_) => AddBillPaymentScreen(
+                            isPurchase: _tab == 'purchase',
+                            paymentNumber: nextPaymentNo <= 0 ? 1 : nextPaymentNo,
+                          ),
+                        ),
+                      );
+                      if (ok == true) {
+                        _loadAll();
+                      }
+                    },
                   ),
                 ],
               ),
@@ -442,8 +639,8 @@ class _BillsScreenState extends State<BillsScreen> {
                     Expanded(
                       child: Text(
                         _tab == 'purchase'
-                            ? 'Sale, Payment In, Sale Return'
-                            : 'Purchase, Payment Out, Purchase Return',
+                            ? 'Purchase, Payment Out, Purchase Return'
+                            : 'Sale, Payment In, Sale Return',
                       ),
                     ),
                     const Icon(Icons.chevron_right),
@@ -666,7 +863,10 @@ class _BillsScreenState extends State<BillsScreen> {
                                 return InkWell(
                                   onTap: e.type == 'expense'
                                       ? () => _openExpenseDetails(e)
-                                      : null,
+                                      : (e.type == 'sale_return' ||
+                                              e.type == 'purchase_return')
+                                          ? () => _openReturnActions(e)
+                                          : null,
                                   child: _entryTile(e),
                                 );
                               },
@@ -765,6 +965,12 @@ class _BillsScreenState extends State<BillsScreen> {
         icon = Icons.shopping_cart_outlined;
         bg = const Color(0xFFF3F2FF);
         fg = const Color(0xFF4B5DA8);
+        break;
+      case 'sale_return':
+      case 'purchase_return':
+        icon = Icons.assignment_return_outlined;
+        bg = const Color(0xFFF9F6DE);
+        fg = const Color(0xFFA88E1F);
         break;
       case 'payment_out':
       case 'expense':
@@ -975,22 +1181,31 @@ class _MoreAction extends StatelessWidget {
     required this.label,
     required this.bg,
     required this.fg,
+    required this.onTap,
   });
 
   final IconData icon;
   final String label;
   final Color bg;
   final Color fg;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        CircleAvatar(
-            radius: 26, backgroundColor: bg, child: Icon(icon, color: fg)),
-        const SizedBox(height: 8),
-        Text(label),
-      ],
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(40),
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: Column(
+          children: [
+            CircleAvatar(
+                radius: 26, backgroundColor: bg, child: Icon(icon, color: fg)),
+            const SizedBox(height: 8),
+            Text(label),
+          ],
+        ),
+      ),
     );
   }
 }

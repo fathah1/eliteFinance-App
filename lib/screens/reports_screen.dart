@@ -4,6 +4,7 @@ import 'customer_transactions_report_screen.dart';
 import 'day_wise_report_screen.dart';
 import 'inventory_reports_screen.dart';
 import 'supplier_transactions_report_screen.dart';
+import 'vat_report_screen.dart';
 
 class ReportsScreen extends StatefulWidget {
   const ReportsScreen({
@@ -277,6 +278,15 @@ class _ReportsScreenState extends State<ReportsScreen> {
           builder: (_) => const InventoryReportsScreen(
             type: InventoryReportType.profitLoss,
           ),
+        ),
+      );
+      return;
+    }
+    if (item.title == 'VAT Report') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const VatReportScreen(),
         ),
       );
       return;

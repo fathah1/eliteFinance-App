@@ -61,6 +61,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   int? _categoryId;
   String? _categoryName;
   final List<_ExpenseItem> _items = [];
+  bool _applyTax = false;
   bool _saving = false;
 
   double get _itemsTotal =>
@@ -105,6 +106,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
       }).where((e) => e.itemId > 0));
 
     _amountController.text = _toDouble(initial['amount']).toStringAsFixed(0);
+    _applyTax = _toDouble(initial['vat_amount']) > 0;
   }
 
   @override
@@ -268,6 +270,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
               categoryId: _categoryId,
               categoryName: _categoryName,
               manualAmount: _toDouble(_amountController.text.trim()),
+              applyTax: _applyTax,
               items: payloadItems,
             )
           : await Api.createExpense(
@@ -277,6 +280,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
               categoryId: _categoryId,
               categoryName: _categoryName,
               manualAmount: _toDouble(_amountController.text.trim()),
+              applyTax: _applyTax,
               items: payloadItems,
             );
       if (!mounted) return;
@@ -429,6 +433,20 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                     ),
                   ),
               ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            color: Colors.white,
+            child: SwitchListTile(
+              value: _applyTax,
+              onChanged: (value) => setState(() => _applyTax = value),
+              title: const Text(
+                'Apply Tax (5%)',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              subtitle: const Text('If off, tax is saved as 0'),
+              activeThumbColor: brandBlue,
             ),
           ),
           const SizedBox(height: 12),
