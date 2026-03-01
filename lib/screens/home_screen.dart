@@ -13,6 +13,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../access_control.dart';
 import '../api.dart';
 import '../routes.dart';
+import '../widgets/app_brand_logo.dart';
+import '../widgets/sync_status_chip.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -274,6 +276,17 @@ class _HomeScreenState extends State<HomeScreen> {
     if (months < 12) return '${months} months ago';
     final years = (diff.inDays / 365).floor();
     return '${years} years ago';
+  }
+
+  String? _partyPhotoUrl(Map<String, dynamic> party) {
+    return Api.resolveMediaUrl(
+      party['photo_url'] ??
+          party['photoPath'] ??
+          party['photo_path'] ??
+          party['photo'] ??
+          party['image_url'] ??
+          party['avatar_url'],
+    );
   }
 
   String _paymentMessage(String name, String? phone, double amount) {
@@ -574,7 +587,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     const brandBlue = Color(0xFF0B4F9E);
     final canAddParties = AccessControl.canAdd(_user, 'parties');
-    final canViewReports = AccessControl.canView(_user, 'reports');
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -584,11 +596,28 @@ class _HomeScreenState extends State<HomeScreen> {
         elevation: 0,
         title: Row(
           children: [
-            Text(_activeBusinessName),
-            const SizedBox(width: 6),
+            const AppBrandLogo(size: 24, textSize: 10, borderRadius: 7),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _activeBusinessName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 16),
+              ),
+            ),
           ],
         ),
         actions: [
+          const Padding(
+            padding: EdgeInsets.only(right: 4),
+            child: Center(
+              child: SyncStatusChip(
+                onDark: true,
+                compact: true,
+              ),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.store_mall_directory),
             onPressed: _openBusinesses,
@@ -596,19 +625,6 @@ class _HomeScreenState extends State<HomeScreen> {
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadData,
-          ),
-          IconButton(
-            icon: const Icon(Icons.bar_chart),
-            onPressed: canViewReports
-                ? () {
-                    Navigator.push(
-                      context,
-                      AppRoutes.onGenerateRoute(
-                        const RouteSettings(name: AppRoutes.reports),
-                      ),
-                    );
-                  }
-                : null,
           ),
           IconButton(
             icon: const Icon(Icons.settings),
@@ -669,8 +685,10 @@ class _HomeScreenState extends State<HomeScreen> {
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
             child: Card(
               elevation: 0,
+              color: Colors.white,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
+                side: const BorderSide(color: Color(0xFFE4E8EF)),
               ),
               child: Column(
                 children: [
@@ -741,20 +759,32 @@ class _HomeScreenState extends State<HomeScreen> {
                       );
                     },
                     child: Padding(
+                      // Keep report CTA neutral/light to avoid pink/toned tint.
                       padding: const EdgeInsets.symmetric(
                         horizontal: 16,
                         vertical: 10,
                       ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: const [
-                          Icon(Icons.picture_as_pdf, size: 18),
-                          SizedBox(width: 8),
-                          Text(
-                            'View Reports',
-                            style: TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                        ],
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF7FAFF),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: const [
+                            Icon(Icons.picture_as_pdf,
+                                size: 18, color: Color(0xFF0B4F9E)),
+                            SizedBox(width: 8),
+                            Text(
+                              'View Reports',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF0B4F9E),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -823,6 +853,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               final balance = _asDouble(c['balance']);
                               final id = c['id'] as int?;
                               final due = id != null ? _dueMap[id] : null;
+                              final photoUrl = _partyPhotoUrl(c);
                               return ListTile(
                                 dense: true,
                                 contentPadding:
@@ -830,12 +861,17 @@ class _HomeScreenState extends State<HomeScreen> {
                                 leading: CircleAvatar(
                                   radius: 18,
                                   backgroundColor: const Color(0xFFE9EEF9),
+                                  backgroundImage: photoUrl != null
+                                      ? NetworkImage(photoUrl)
+                                      : null,
                                   child: Text(
-                                    (c['name'] ?? 'A')
-                                        .toString()
-                                        .trim()
-                                        .toUpperCase()
-                                        .substring(0, 1),
+                                    photoUrl == null
+                                        ? (c['name'] ?? 'A')
+                                            .toString()
+                                            .trim()
+                                            .toUpperCase()
+                                            .substring(0, 1)
+                                        : '',
                                     style: const TextStyle(
                                       color: Color(0xFF0B4F9E),
                                       fontWeight: FontWeight.w600,

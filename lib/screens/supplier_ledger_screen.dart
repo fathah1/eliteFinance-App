@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:screenshot/screenshot.dart';
@@ -184,9 +185,11 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
 
             String selectedKey() {
               if (selected == null) return '';
-              final d = DateTime(selected!.year, selected!.month, selected!.day);
+              final d =
+                  DateTime(selected!.year, selected!.month, selected!.day);
               final nw = DateTime(nextWeek.year, nextWeek.month, nextWeek.day);
-              final nm = DateTime(nextMonth.year, nextMonth.month, nextMonth.day);
+              final nm =
+                  DateTime(nextMonth.year, nextMonth.month, nextMonth.day);
               if (d == nw) return 'next_week';
               if (d == nm) return 'next_month';
               return 'calendar';
@@ -257,7 +260,8 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
                         final picked = await showDatePicker(
                           context: context,
                           initialDate: selected ?? today,
-                          firstDate: DateTime(today.year, today.month, today.day),
+                          firstDate:
+                              DateTime(today.year, today.month, today.day),
                           lastDate: today.add(const Duration(days: 365 * 5)),
                         );
                         if (picked != null) {
@@ -322,11 +326,25 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
     return '$contact has requested a payment of AED $amountLabel.';
   }
 
+  ImageProvider? _partyAvatarProvider() {
+    final url = Api.resolveMediaUrl(
+      widget.supplier['photo_url'] ??
+          widget.supplier['photoPath'] ??
+          widget.supplier['photo_path'] ??
+          widget.supplier['photo'] ??
+          widget.supplier['image_url'] ??
+          widget.supplier['avatar_url'],
+    );
+    if (url == null) return null;
+    return NetworkImage(url);
+  }
+
   Widget _buildRequestCard(
     String name,
     String? phone,
     double amount,
   ) {
+    final avatar = _partyAvatarProvider();
     final time = DateFormat('hh:mm a dd MMM yyyy').format(DateTime.now());
     final amountLabel = amount.abs().toStringAsFixed(0);
     const appName = 'app';
@@ -352,15 +370,18 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
             CircleAvatar(
               radius: 22,
               backgroundColor: const Color(0xFFE9EEF9),
-              child: Text(
-                name.trim().isEmpty
-                    ? 'S'
-                    : name.trim().toUpperCase().substring(0, 1),
-                style: const TextStyle(
-                  color: Color(0xFF0B4F9E),
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+              backgroundImage: avatar,
+              child: avatar == null
+                  ? Text(
+                      name.trim().isEmpty
+                          ? 'S'
+                          : name.trim().toUpperCase().substring(0, 1),
+                      style: const TextStyle(
+                        color: Color(0xFF0B4F9E),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    )
+                  : null,
             ),
             const SizedBox(height: 10),
             Text(
@@ -439,8 +460,8 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
       pixelRatio: 2.0,
     );
     final dir = await getTemporaryDirectory();
-    final file =
-        File('${dir.path}/payment_request_${DateTime.now().millisecondsSinceEpoch}.png');
+    final file = File(
+        '${dir.path}/payment_request_${DateTime.now().millisecondsSinceEpoch}.png');
     await file.writeAsBytes(imageBytes);
     final message = _paymentMessage(userName, userPhone, amount);
     await Share.shareXFiles([XFile(file.path)], text: message);
@@ -468,19 +489,478 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
   }
 
   Future<void> _openAdd(String type) async {
-    await Navigator.push(
-      context,
-      AppRoutes.onGenerateRoute(
-        RouteSettings(
-          name: AppRoutes.addSupplierEntry,
-          arguments: {
-            'supplierId': widget.supplier['id'],
-            'initialType': type,
+    await _showAddEntrySheet(type);
+  }
+
+  Future<void> _showEditSupplierSheet() async {
+    final nameController = TextEditingController(
+      text: (widget.supplier['name'] ?? '').toString(),
+    );
+    final phoneController = TextEditingController(
+      text: (widget.supplier['phone'] ?? '').toString(),
+    );
+    File? pickedPhoto;
+    bool saving = false;
+    String? error;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            Future<void> onPickPhoto() async {
+              final picked = await ImagePicker().pickImage(
+                source: ImageSource.gallery,
+                imageQuality: 85,
+              );
+              if (picked == null) return;
+              setSheetState(() {
+                pickedPhoto = File(picked.path);
+              });
+            }
+
+            Future<void> onSave() async {
+              if (saving) return;
+              final name = nameController.text.trim();
+              if (name.isEmpty) {
+                setSheetState(() {
+                  error = 'Name is required';
+                });
+                return;
+              }
+              setSheetState(() {
+                saving = true;
+                error = null;
+              });
+              try {
+                final updated = await Api.updateSupplier(
+                  supplierId: widget.supplier['id'] as int,
+                  name: name,
+                  phone: phoneController.text.trim(),
+                  photoPath: pickedPhoto?.path,
+                );
+                if (!mounted) return;
+                setState(() {
+                  widget.supplier['name'] = updated['name'] ?? name;
+                  widget.supplier['phone'] = updated['phone'];
+                  if (updated['photo_url'] != null) {
+                    widget.supplier['photo_url'] = updated['photo_url'];
+                  }
+                  if (updated['photo_path'] != null) {
+                    widget.supplier['photo_path'] = updated['photo_path'];
+                  }
+                });
+                Navigator.pop(ctx);
+                await _load();
+              } catch (e) {
+                setSheetState(() {
+                  saving = false;
+                  error = 'Failed to update supplier';
+                });
+              }
+            }
+
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 12,
+                right: 12,
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 12,
+              ),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(22),
+                ),
+                child: SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Edit Supplier',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        TextField(
+                          controller: nameController,
+                          decoration: InputDecoration(
+                            labelText: 'Supplier name',
+                            filled: true,
+                            fillColor: const Color(0xFFF7F8FA),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: BorderSide.none,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: phoneController,
+                          keyboardType: TextInputType.phone,
+                          decoration: InputDecoration(
+                            labelText: 'Phone (optional)',
+                            filled: true,
+                            fillColor: const Color(0xFFF7F8FA),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: BorderSide.none,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        OutlinedButton.icon(
+                          onPressed: onPickPhoto,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFF0B4F9E),
+                            side: const BorderSide(color: Color(0xFF0B4F9E)),
+                          ),
+                          icon: const Icon(Icons.photo_camera),
+                          label: Text(
+                            pickedPhoto == null
+                                ? 'Change image'
+                                : 'Image selected',
+                          ),
+                        ),
+                        if (error != null) ...[
+                          const SizedBox(height: 8),
+                          Text(error!,
+                              style: const TextStyle(color: Colors.red)),
+                        ],
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: saving ? null : onSave,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF0B4F9E),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: Text(saving ? 'Saving...' : 'Save Changes'),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          width: double.infinity,
+                          child: TextButton(
+                            onPressed: saving
+                                ? null
+                                : () {
+                                    Navigator.pop(ctx);
+                                    _deleteSupplierWithConfirmation();
+                                  },
+                            child: const Text(
+                              'Delete supplier',
+                              style: TextStyle(color: Colors.red),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
           },
-        ),
+        );
+      },
+    );
+  }
+
+  Future<void> _deleteSupplierWithConfirmation() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete supplier?'),
+        content: const Text('Are you sure you want to delete this supplier?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
       ),
     );
-    _load();
+    if (ok != true) return;
+
+    try {
+      final tx = await Api.getSupplierTransactions(
+        supplierId: widget.supplier['id'] as int,
+      );
+      for (final t in tx) {
+        final id = (t as Map)['id'];
+        if (id is int) {
+          await Api.deleteSupplierTransaction(id);
+        }
+      }
+      await Api.deleteSupplier(widget.supplier['id'] as int);
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to delete supplier')),
+      );
+    }
+  }
+
+  Future<int?> _getActiveBusinessServerId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt('active_business_server_id');
+  }
+
+  Future<void> _showAddEntrySheet(String type) async {
+    final amountController = TextEditingController();
+    final noteController = TextEditingController();
+    final dateLabel = DateFormat('dd MMM yyyy');
+    DateTime selectedDate = DateTime.now();
+    File? attachment;
+    String? error;
+    bool saving = false;
+    final isGave = type == 'CREDIT';
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            Future<void> onPickAttachment() async {
+              final picked = await ImagePicker().pickImage(
+                source: ImageSource.gallery,
+                imageQuality: 85,
+              );
+              if (picked == null) return;
+              setSheetState(() {
+                attachment = File(picked.path);
+              });
+            }
+
+            Future<void> onPickDate() async {
+              final picked = await showDatePicker(
+                context: ctx,
+                initialDate: selectedDate,
+                firstDate: DateTime(2000),
+                lastDate: DateTime(2100),
+              );
+              if (picked == null) return;
+              setSheetState(() {
+                selectedDate = DateTime(
+                  picked.year,
+                  picked.month,
+                  picked.day,
+                  selectedDate.hour,
+                  selectedDate.minute,
+                );
+              });
+            }
+
+            Future<void> onSave() async {
+              if (saving) return;
+              final amount = double.tryParse(amountController.text.trim());
+              if (amount == null || amount <= 0) {
+                setSheetState(() {
+                  error = 'Enter a valid amount';
+                });
+                return;
+              }
+              setSheetState(() {
+                error = null;
+                saving = true;
+              });
+              try {
+                final businessId = await _getActiveBusinessServerId();
+                if (businessId == null) {
+                  setSheetState(() {
+                    error = 'Select a business first';
+                    saving = false;
+                  });
+                  return;
+                }
+                await Api.createSupplierTransaction(
+                  businessId: businessId,
+                  supplierId: widget.supplier['id'] as int,
+                  amount: amount,
+                  type: type,
+                  note: noteController.text.trim(),
+                  createdAt: selectedDate.toIso8601String(),
+                  attachmentPath: attachment?.path,
+                );
+                if (!mounted) return;
+                Navigator.pop(ctx);
+                await _load();
+              } catch (e) {
+                setSheetState(() {
+                  error = 'Failed to save entry';
+                  saving = false;
+                });
+              }
+            }
+
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 12,
+                right: 12,
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 12,
+              ),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(22),
+                ),
+                child: SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: isGave
+                                    ? const Color(0xFFFDEDED)
+                                    : const Color(0xFFE9F7EF),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Icon(
+                                isGave
+                                    ? Icons.arrow_upward
+                                    : Icons.arrow_downward,
+                                color: isGave ? Colors.red : Colors.green,
+                                size: 20,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              isGave
+                                  ? 'Add You Gave Entry'
+                                  : 'Add You Got Entry',
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        TextField(
+                          controller: amountController,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          decoration: InputDecoration(
+                            labelText: 'Amount (AED)',
+                            filled: true,
+                            fillColor: const Color(0xFFF7F8FA),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: BorderSide.none,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: noteController,
+                          decoration: InputDecoration(
+                            labelText: 'Note (optional)',
+                            filled: true,
+                            fillColor: const Color(0xFFF7F8FA),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: BorderSide.none,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: onPickDate,
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: const Color(0xFF0B4F9E),
+                                  side: const BorderSide(
+                                    color: Color(0xFF0B4F9E),
+                                  ),
+                                ),
+                                icon: const Icon(Icons.calendar_today),
+                                label: Text(dateLabel.format(selectedDate)),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: onPickAttachment,
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: const Color(0xFF0B4F9E),
+                                  side: const BorderSide(
+                                    color: Color(0xFF0B4F9E),
+                                  ),
+                                ),
+                                icon: const Icon(Icons.attach_file),
+                                label: Text(
+                                  attachment == null
+                                      ? 'Attach image'
+                                      : 'Image attached',
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (error != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            error!,
+                            style: const TextStyle(color: Colors.red),
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: saving ? null : onSave,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF0B4F9E),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: Text(saving ? 'Saving...' : 'Save Entry'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -504,6 +984,7 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
         : DateTime(_dueDate!.year, _dueDate!.month, _dueDate!.day);
     final dueIsToday = dueDay != null && dueDay == today;
     final dueIsOverdue = dueDay != null && dueDay.isBefore(today);
+    final avatar = _partyAvatarProvider();
     return Scaffold(
       backgroundColor: const Color(0xFFF3F4F6),
       appBar: AppBar(
@@ -513,10 +994,13 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
           children: [
             CircleAvatar(
               backgroundColor: Colors.white,
-              child: Text(
-                name.isNotEmpty ? name[0].toUpperCase() : 'A',
-                style: const TextStyle(color: brandBlue),
-              ),
+              backgroundImage: avatar,
+              child: avatar == null
+                  ? Text(
+                      name.isNotEmpty ? name[0].toUpperCase() : 'A',
+                      style: const TextStyle(color: brandBlue),
+                    )
+                  : null,
             ),
             const SizedBox(width: 12),
             Column(
@@ -630,6 +1114,11 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
                 const _QuickAction(icon: Icons.picture_as_pdf, label: 'Report'),
+                _QuickAction(
+                  icon: Icons.edit,
+                  label: 'Edit',
+                  onTap: _showEditSupplierSheet,
+                ),
                 if (_balance > 0)
                   _QuickAction(
                     icon: FontAwesomeIcons.whatsapp,
@@ -659,7 +1148,8 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
                           final running = _asDouble(t['running_balance']);
                           return InkWell(
                             onTap: () {
-                              final attachment = (t['attachment_path'] ?? '').toString();
+                              final attachment =
+                                  (t['attachment_path'] ?? '').toString();
                               final attachmentUrl = attachment.isNotEmpty
                                   ? 'https://eliteposs.com/financeserver/public/storage/$attachment'
                                   : '';
@@ -755,7 +1245,9 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
                                       ),
                                     ),
                                   ),
-                                  if ((t['attachment_path'] ?? '').toString().isNotEmpty)
+                                  if ((t['attachment_path'] ?? '')
+                                      .toString()
+                                      .isNotEmpty)
                                     const Padding(
                                       padding: EdgeInsets.only(right: 8),
                                       child: Icon(Icons.attachment, size: 16),

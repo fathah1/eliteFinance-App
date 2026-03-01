@@ -7,6 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api.dart';
+import '../app_events.dart';
 import 'add_customer_screen.dart';
 import 'add_item_screen.dart';
 import 'sale_invoice_screen.dart';
@@ -134,7 +135,9 @@ class _AddSaleBillScreenState extends State<AddSaleBillScreen> {
 
   bool get _canGenerateBill =>
       _saleBillAmount > 0 &&
-      (_paymentMode == 'unpaid' || _paymentMode == 'cash' || _paymentMode == 'card');
+      (_paymentMode == 'unpaid' ||
+          _paymentMode == 'cash' ||
+          _paymentMode == 'card');
 
   Future<void> _pickDate() async {
     final picked = await showDatePicker(
@@ -165,6 +168,7 @@ class _AddSaleBillScreenState extends State<AddSaleBillScreen> {
   }
 
   Future<void> _openNotesAndPhotos() async {
+    const brandBlue = Color(0xFF0B4F9E);
     final noteController = TextEditingController(text: _privateNote);
     final tempPhotos = List<String>.from(_notePhotos);
     final picker = ImagePicker();
@@ -179,89 +183,124 @@ class _AddSaleBillScreenState extends State<AddSaleBillScreen> {
         return StatefulBuilder(
           builder: (context, setSheet) {
             final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-            return Padding(
-              padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + bottomInset),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Expanded(
-                        child: Text(
-                          'Add Notes and Photos',
-                          style: TextStyle(
-                              fontSize: 34 / 2, fontWeight: FontWeight.w700),
+            return Container(
+              color: Colors.white,
+              child: SingleChildScrollView(
+                padding: EdgeInsets.fromLTRB(16, 12, 16, 16 + bottomInset),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 38,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFD9DFEA),
+                          borderRadius: BorderRadius.circular(20),
                         ),
                       ),
-                      IconButton(
-                        onPressed: () => Navigator.pop(context, false),
-                        icon: const Icon(Icons.close),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  const Text('Add Notes for your personal reference'),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: noteController,
-                    maxLines: 4,
-                    decoration: const InputDecoration(
-                      hintText: 'Enter your notes here',
-                      border: OutlineInputBorder(),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: List.generate(4, (index) {
-                      final hasPhoto = index < tempPhotos.length;
-                      return Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: InkWell(
-                            onTap: () async {
-                              if (hasPhoto) {
-                                setSheet(() => tempPhotos.removeAt(index));
-                                return;
-                              }
-                              final file = await picker.pickImage(
-                                source: ImageSource.gallery,
-                                imageQuality: 80,
-                              );
-                              if (file == null) return;
-                              setSheet(() => tempPhotos.add(file.path));
-                            },
-                            child: Container(
-                              height: 82,
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: Colors.black26),
-                              ),
-                              child: hasPhoto
-                                  ? ClipRRect(
-                                      borderRadius: BorderRadius.circular(12),
-                                      child: Image.file(
-                                        File(tempPhotos[index]),
-                                        fit: BoxFit.cover,
-                                      ),
-                                    )
-                                  : const Icon(Icons.add_a_photo_outlined,
-                                      color: Colors.black38),
-                            ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Add Notes and Photos',
+                            style: TextStyle(
+                                fontSize: 20, fontWeight: FontWeight.w700),
                           ),
                         ),
-                      );
-                    }),
-                  ),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      child: const Text('SAVE'),
+                        IconButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Add Notes for your personal reference',
+                      style: TextStyle(color: Color(0xFF6F7786)),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: noteController,
+                      maxLines: 4,
+                      decoration: InputDecoration(
+                        hintText: 'Enter your notes here',
+                        filled: true,
+                        fillColor: const Color(0xFFF7F9FC),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: List.generate(4, (index) {
+                        final hasPhoto = index < tempPhotos.length;
+                        return Expanded(
+                          child: Padding(
+                            padding: EdgeInsets.only(right: index == 3 ? 0 : 8),
+                            child: InkWell(
+                              onTap: () async {
+                                if (hasPhoto) {
+                                  setSheet(() => tempPhotos.removeAt(index));
+                                  return;
+                                }
+                                final file = await picker.pickImage(
+                                  source: ImageSource.gallery,
+                                  imageQuality: 80,
+                                );
+                                if (file == null) return;
+                                setSheet(() => tempPhotos.add(file.path));
+                              },
+                              child: Container(
+                                height: 82,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                      color: const Color(0xFFCFD6E3)),
+                                  color: const Color(0xFFF8FAFD),
+                                ),
+                                child: hasPhoto
+                                    ? ClipRRect(
+                                        borderRadius: BorderRadius.circular(12),
+                                        child: Image.file(
+                                          File(tempPhotos[index]),
+                                          fit: BoxFit.cover,
+                                        ),
+                                      )
+                                    : const Icon(Icons.add_a_photo_outlined,
+                                        color: Color(0xFF8D96A8)),
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: brandBlue,
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size.fromHeight(50),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text(
+                          'SAVE',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             );
           },
@@ -601,6 +640,7 @@ class _AddSaleBillScreenState extends State<AddSaleBillScreen> {
       lowStockAlert: (data['lowStockAlert'] as int?) ?? 0,
       photoPath: data['photoPath'] as String?,
     );
+    AppEvents.notifyItemsChanged();
 
     if (!mounted) return;
     await _openInventoryPicker();
@@ -1441,6 +1481,7 @@ class _InventoryPickerSheetState extends State<_InventoryPickerSheet> {
       lowStockAlert: (data['lowStockAlert'] as int?) ?? 0,
       photoPath: data['photoPath'] as String?,
     );
+    AppEvents.notifyItemsChanged();
 
     if (!mounted) return;
     await _load();

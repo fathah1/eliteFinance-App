@@ -1,5 +1,6 @@
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
+import 'dart:convert';
 
 class Db {
   Db._();
@@ -19,7 +20,7 @@ class Db {
 
     return openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE users (
@@ -68,14 +69,27 @@ class Db {
             synced INTEGER NOT NULL DEFAULT 0
           )
         ''');
+
+        await db.execute('''
+          CREATE TABLE pending_ops (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          )
+        ''');
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
-          await db.execute('ALTER TABLE customers ADD COLUMN server_id INTEGER');
+          await db
+              .execute('ALTER TABLE customers ADD COLUMN server_id INTEGER');
           await db.execute(
               'ALTER TABLE customers ADD COLUMN synced INTEGER NOT NULL DEFAULT 0');
-          await db.execute(
-              'ALTER TABLE transactions ADD COLUMN server_id INTEGER');
+          await db
+              .execute('ALTER TABLE transactions ADD COLUMN server_id INTEGER');
         }
         if (oldVersion < 3) {
           await db.execute('ALTER TABLE users ADD COLUMN username TEXT');
@@ -92,6 +106,19 @@ class Db {
               'ALTER TABLE customers ADD COLUMN business_id INTEGER NOT NULL DEFAULT 0');
           await db.execute(
               'ALTER TABLE transactions ADD COLUMN business_id INTEGER NOT NULL DEFAULT 0');
+        }
+        if (oldVersion < 4) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS pending_ops (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              action TEXT NOT NULL,
+              payload TEXT NOT NULL,
+              attempts INTEGER NOT NULL DEFAULT 0,
+              last_error TEXT,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+          ''');
         }
       },
     );
@@ -389,8 +416,8 @@ class Db {
           'phone': c['phone'],
           'opening_balance': (c['opening_balance'] as num?)?.toDouble() ?? 0,
           'is_archived': (c['is_archived'] ?? false) == true ? 1 : 0,
-          'created_at': (c['created_at'] ?? DateTime.now().toIso8601String())
-              .toString(),
+          'created_at':
+              (c['created_at'] ?? DateTime.now().toIso8601String()).toString(),
           'synced': 1,
         },
         conflictAlgorithm: ConflictAlgorithm.ignore,
@@ -439,8 +466,8 @@ class Db {
           'amount': (t['amount'] as num?)?.toDouble() ?? 0,
           'type': t['type'],
           'note': t['note'],
-          'created_at': (t['created_at'] ?? DateTime.now().toIso8601String())
-              .toString(),
+          'created_at':
+              (t['created_at'] ?? DateTime.now().toIso8601String()).toString(),
           'synced': 1,
         },
         conflictAlgorithm: ConflictAlgorithm.ignore,
@@ -451,8 +478,8 @@ class Db {
           'amount': (t['amount'] as num?)?.toDouble() ?? 0,
           'type': t['type'],
           'note': t['note'],
-          'created_at': (t['created_at'] ?? DateTime.now().toIso8601String())
-              .toString(),
+          'created_at':
+              (t['created_at'] ?? DateTime.now().toIso8601String()).toString(),
           'synced': 1,
         },
         where: 'server_id = ?',
@@ -460,5 +487,59 @@ class Db {
       );
     }
     await batch.commit(noResult: true);
+  }
+
+  Future<int> enqueuePendingOp({
+    required String action,
+    required Map<String, dynamic> payload,
+  }) async {
+    final db = await database;
+    final now = DateTime.now().toIso8601String();
+    return db.insert('pending_ops', {
+      'action': action,
+      'payload': jsonEncode(payload),
+      'attempts': 0,
+      'last_error': null,
+      'created_at': now,
+      'updated_at': now,
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> listPendingOps({int limit = 50}) async {
+    final db = await database;
+    return db.query(
+      'pending_ops',
+      orderBy: 'id ASC',
+      limit: limit,
+    );
+  }
+
+  Future<int> pendingOpsCount() async {
+    final db = await database;
+    final rows = await db.rawQuery('SELECT COUNT(*) AS c FROM pending_ops');
+    if (rows.isEmpty) return 0;
+    final c = rows.first['c'];
+    if (c is int) return c;
+    if (c is num) return c.toInt();
+    return int.tryParse(c.toString()) ?? 0;
+  }
+
+  Future<void> deletePendingOp(int id) async {
+    final db = await database;
+    await db.delete('pending_ops', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> markPendingOpAttempt(int id, {String? error}) async {
+    final db = await database;
+    await db.rawUpdate(
+      '''
+      UPDATE pending_ops
+      SET attempts = attempts + 1,
+          last_error = ?,
+          updated_at = ?
+      WHERE id = ?
+      ''',
+      [error, DateTime.now().toIso8601String(), id],
+    );
   }
 }

@@ -1,9 +1,8 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import '../api.dart';
-import '../routes.dart';
 import 'add_customer_screen.dart';
 import 'add_supplier_screen.dart';
 
@@ -21,6 +20,7 @@ class _ContactsImportScreenState extends State<ContactsImportScreen> {
   bool _loading = true;
   String _query = '';
   String? _error;
+  final TextEditingController _searchController = TextEditingController();
   final Set<String> _selectedIds = {};
   bool _selectMode = false;
 
@@ -42,7 +42,8 @@ class _ContactsImportScreenState extends State<ContactsImportScreen> {
       if (!req.isGranted) {
         setState(() {
           _loading = false;
-          _error = 'Contacts permission denied. Please enable access in Settings.';
+          _error =
+              'Contacts permission denied. Please enable access in Settings.';
         });
         return;
       }
@@ -73,14 +74,22 @@ class _ContactsImportScreenState extends State<ContactsImportScreen> {
     }).toList();
   }
 
-  Future<int?> _getActiveBusinessServerId() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getInt('active_business_server_id');
+  Future<String?> _saveContactPhoto(Contact c) async {
+    final bytes = c.photo;
+    if (bytes == null || bytes.isEmpty) return null;
+    final dir = await getTemporaryDirectory();
+    final safeId = c.id.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_');
+    final file = File('${dir.path}/contact_${widget.mode}_$safeId.jpg');
+    if (!await file.exists()) {
+      await file.writeAsBytes(bytes, flush: true);
+    }
+    return file.path;
   }
 
   Future<void> _addContact(Contact c) async {
     final name = c.displayName.isEmpty ? 'Unnamed' : c.displayName;
     final phone = c.phones.isNotEmpty ? c.phones.first.number : null;
+    final photoPath = await _saveContactPhoto(c);
 
     bool? saved;
     if (widget.mode == 'customers') {
@@ -90,6 +99,7 @@ class _ContactsImportScreenState extends State<ContactsImportScreen> {
           builder: (_) => AddCustomerScreen(
             initialName: name,
             initialPhone: phone,
+            initialPhotoPath: photoPath,
           ),
         ),
       );
@@ -100,6 +110,7 @@ class _ContactsImportScreenState extends State<ContactsImportScreen> {
           builder: (_) => AddSupplierScreen(
             initialName: name,
             initialPhone: phone,
+            initialPhotoPath: photoPath,
           ),
         ),
       );
@@ -135,8 +146,9 @@ class _ContactsImportScreenState extends State<ContactsImportScreen> {
         SnackBar(content: Text('Failed: $e')),
       );
     } finally {
-      if (!mounted) return;
-      setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -153,18 +165,46 @@ class _ContactsImportScreenState extends State<ContactsImportScreen> {
   }
 
   @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     const brandBlue = Color(0xFF0B4F9E);
-    final title = widget.mode == 'customers'
-        ? 'Select Customer'
-        : 'Select Supplier';
+    final title =
+        widget.mode == 'customers' ? 'Select Customer' : 'Select Supplier';
 
     return Scaffold(
+      backgroundColor: const Color(0xFFF4F6FA),
       appBar: AppBar(
         title: Text(title),
         backgroundColor: brandBlue,
         foregroundColor: Colors.white,
         actions: [
+          if (_selectMode)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: Center(
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    '${_selectedIds.length} selected',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ),
           if (_selectMode)
             TextButton(
               onPressed: _bulkImport,
@@ -178,68 +218,131 @@ class _ContactsImportScreenState extends State<ContactsImportScreen> {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.all(16),
-            child: TextField(
-              decoration: InputDecoration(
-                hintText: widget.mode == 'customers'
-                    ? 'Customer name'
-                    : 'Supplier name',
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () {
-                    setState(() {
-                      _query = '';
-                      _applyFilter();
-                    });
-                  },
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: brandBlue),
-                ),
-              ),
-              onChanged: (v) {
-                setState(() {
-                  _query = v.trim();
-                  _applyFilter();
-                });
-              },
-            ),
-          ),
-          ListTile(
-            leading: Container(
-              width: 44,
-              height: 44,
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+            child: Container(
               decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: brandBlue, width: 2),
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFD8E0EC)),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x0A000000),
+                    blurRadius: 8,
+                    offset: Offset(0, 2),
+                  ),
+                ],
               ),
-              child: const Icon(Icons.add, color: brandBlue),
-            ),
-            title: Text(
-              widget.mode == 'customers' ? 'Add Customer' : 'Add Supplier',
-              style: const TextStyle(color: brandBlue),
-            ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () async {
-              if (widget.mode == 'customers') {
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const AddCustomerScreen(),
+              child: TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: widget.mode == 'customers'
+                      ? 'Search customer'
+                      : 'Search supplier',
+                  hintStyle:
+                      const TextStyle(color: Color(0xFF8A93A5), fontSize: 16),
+                  prefixIcon:
+                      const Icon(Icons.search, color: brandBlue, size: 26),
+                  suffixIcon: _query.isEmpty
+                      ? null
+                      : IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() {
+                              _query = '';
+                              _applyFilter();
+                            });
+                          },
+                        ),
+                  filled: true,
+                  fillColor: Colors.white,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide.none,
                   ),
-                );
-              } else {
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const AddSupplierScreen(),
-                  ),
-                );
-              }
-            },
+                ),
+                onChanged: (v) {
+                  setState(() {
+                    _query = v.trim();
+                    _applyFilter();
+                  });
+                },
+              ),
+            ),
           ),
-          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: () async {
+                if (widget.mode == 'customers') {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const AddCustomerScreen(),
+                    ),
+                  );
+                } else {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const AddSupplierScreen(),
+                    ),
+                  );
+                }
+              },
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFD8E0EC)),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: brandBlue, width: 1.8),
+                      ),
+                      child: const Icon(Icons.add, color: brandBlue),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      widget.mode == 'customers'
+                          ? 'Add Customer'
+                          : 'Add Supplier',
+                      style: const TextStyle(
+                        color: brandBlue,
+                        fontSize: 18 / 1.2,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const Spacer(),
+                    const Icon(Icons.chevron_right, color: brandBlue),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 0, 18, 6),
+            child: Row(
+              children: [
+                Text(
+                  _selectMode ? 'Tap contacts to select multiple' : 'Contacts',
+                  style: const TextStyle(
+                    color: Color(0xFF7C8595),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
@@ -261,8 +364,9 @@ class _ContactsImportScreenState extends State<ContactsImportScreen> {
                         ),
                       )
                     : ListView.separated(
+                        padding: const EdgeInsets.fromLTRB(10, 0, 10, 12),
                         itemCount: _filtered.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        separatorBuilder: (_, __) => const SizedBox(height: 4),
                         itemBuilder: (context, index) {
                           final c = _filtered[index];
                           final name = c.displayName.isNotEmpty
@@ -277,34 +381,55 @@ class _ContactsImportScreenState extends State<ContactsImportScreen> {
                               .map((p) => p[0].toUpperCase())
                               .join();
                           final selected = _selectedIds.contains(c.id);
-                          return ListTile(
-                            leading: CircleAvatar(
-                              radius: 24,
-                              backgroundColor: brandBlue,
-                              backgroundImage:
-                                  c.photo != null ? MemoryImage(c.photo!) : null,
-                              child: c.photo == null
-                                  ? Text(
-                                      initials.isNotEmpty ? initials : '?',
-                                      style:
-                                          const TextStyle(color: Colors.white),
-                                    )
-                                  : null,
+                          return Material(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            child: ListTile(
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              leading: CircleAvatar(
+                                radius: 22,
+                                backgroundColor: brandBlue,
+                                backgroundImage: c.photo != null
+                                    ? MemoryImage(c.photo!)
+                                    : null,
+                                child: c.photo == null
+                                    ? Text(
+                                        initials.isNotEmpty ? initials : '?',
+                                        style: const TextStyle(
+                                            color: Colors.white),
+                                      )
+                                    : null,
+                              ),
+                              title: Text(
+                                name,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              subtitle: Text(
+                                phone,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: Color(0xFF7B8494),
+                                ),
+                              ),
+                              trailing: selected
+                                  ? const Icon(Icons.check_circle,
+                                      color: Colors.green)
+                                  : const Icon(Icons.chevron_right,
+                                      color: Color(0xFF9AA3B2)),
+                              onLongPress: () => _toggleSelect(c),
+                              onTap: () async {
+                                if (_selectMode) {
+                                  _toggleSelect(c);
+                                  return;
+                                }
+                                await _addContact(c);
+                              },
                             ),
-                            title: Text(name),
-                            subtitle: Text(phone),
-                            trailing: selected
-                                ? const Icon(Icons.check_circle,
-                                    color: Colors.green)
-                                : null,
-                            onLongPress: () => _toggleSelect(c),
-                            onTap: () async {
-                              if (_selectMode) {
-                                _toggleSelect(c);
-                                return;
-                              }
-                              await _addContact(c);
-                            },
                           );
                         },
                       ),

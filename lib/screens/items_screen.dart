@@ -5,7 +5,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 import '../access_control.dart';
 import '../api.dart';
+import '../app_events.dart';
 import '../routes.dart';
+import '../widgets/sync_status_chip.dart';
 import 'item_detail_screen.dart';
 
 class ItemData {
@@ -52,6 +54,11 @@ class _ItemsScreenState extends State<ItemsScreen> {
   bool _canAddItems = true;
   bool _canEditItems = true;
 
+  void _onItemsChanged() {
+    if (!mounted) return;
+    _loadItems();
+  }
+
   List<ItemData> get _filtered {
     final list = _items.where((i) => i.type == _tab).toList();
     final filtered = _filter == 'low' ? list.where(_isLowStock).toList() : list;
@@ -89,7 +96,14 @@ class _ItemsScreenState extends State<ItemsScreen> {
   @override
   void initState() {
     super.initState();
+    AppEvents.itemsRefreshTick.addListener(_onItemsChanged);
     _init();
+  }
+
+  @override
+  void dispose() {
+    AppEvents.itemsRefreshTick.removeListener(_onItemsChanged);
+    super.dispose();
   }
 
   Future<void> _init() async {
@@ -499,6 +513,14 @@ class _ItemsScreenState extends State<ItemsScreen> {
         backgroundColor: brandBlue,
         foregroundColor: Colors.white,
         title: const Text('Items'),
+        actions: const [
+          Padding(
+            padding: EdgeInsets.only(right: 12),
+            child: Center(
+              child: SyncStatusChip(onDark: true, compact: true),
+            ),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         heroTag: 'items_add_fab',
@@ -702,8 +724,12 @@ class _ItemsScreenState extends State<ItemsScreen> {
                             child: Card(
                               elevation: 0,
                               margin: const EdgeInsets.only(bottom: 12),
+                              color: Colors.white,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
+                                side: const BorderSide(
+                                  color: Color(0xFFE4E8EF),
+                                ),
                               ),
                               child: Padding(
                                 padding: const EdgeInsets.all(12),
@@ -765,15 +791,16 @@ class _ItemsScreenState extends State<ItemsScreen> {
                                               vertical: 4,
                                             ),
                                             decoration: BoxDecoration(
-                                              color: const Color(0xFFFDEDED),
+                                              color: const Color(0xFFFFF3E0),
                                               borderRadius:
                                                   BorderRadius.circular(14),
                                             ),
                                             child: const Text(
                                               'Low Stock',
                                               style: TextStyle(
-                                                color: Colors.red,
+                                                color: Color(0xFFB45309),
                                                 fontSize: 12,
+                                                fontWeight: FontWeight.w600,
                                               ),
                                             ),
                                           ),

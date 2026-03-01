@@ -11,6 +11,8 @@ import 'add_sale_bill_screen.dart';
 import 'cashbook_screen.dart';
 import 'expense_detail_screen.dart';
 import '../routes.dart';
+import '../widgets/app_brand_logo.dart';
+import '../widgets/sync_status_chip.dart';
 
 class _BillEntry {
   _BillEntry({
@@ -130,24 +132,29 @@ class _BillsScreenState extends State<BillsScreen> {
       final sales = await Api.getSales(businessId: businessId);
       final purchases = await Api.getPurchases(businessId: businessId);
       final saleReturns = await Api.getSaleReturns(businessId: businessId);
-      final purchaseReturns = await Api.getPurchaseReturns(businessId: businessId);
+      final purchaseReturns =
+          await Api.getPurchaseReturns(businessId: businessId);
       final expenses = await Api.getExpenses(businessId: businessId);
-      final allCustomerTx = await Api.getAllTransactions(businessId: businessId);
-      final allSupplierTx = await Api.getAllSupplierTransactions(businessId: businessId);
+      final allCustomerTx =
+          await Api.getAllTransactions(businessId: businessId);
+      final allSupplierTx =
+          await Api.getAllSupplierTransactions(businessId: businessId);
       final customers = await Api.getCustomers(businessId: businessId);
       final suppliers = await Api.getSuppliers(businessId: businessId);
 
       final customerNameById = <int, String>{
         for (final c in customers)
-          _toInt((c as Map)['id']): (((c)['name'] ?? '').toString().trim().isEmpty)
-              ? 'Customer'
-              : ((c)['name'] ?? '').toString(),
+          _toInt((c as Map)['id']):
+              (((c)['name'] ?? '').toString().trim().isEmpty)
+                  ? 'Customer'
+                  : ((c)['name'] ?? '').toString(),
       };
       final supplierNameById = <int, String>{
         for (final s in suppliers)
-          _toInt((s as Map)['id']): (((s)['name'] ?? '').toString().trim().isEmpty)
-              ? 'Supplier'
-              : ((s)['name'] ?? '').toString(),
+          _toInt((s as Map)['id']):
+              (((s)['name'] ?? '').toString().trim().isEmpty)
+                  ? 'Supplier'
+                  : ((s)['name'] ?? '').toString(),
       };
 
       final mapped = <_BillEntry>[];
@@ -180,7 +187,6 @@ class _BillsScreenState extends State<BillsScreen> {
                 unpaid ? const Color(0xFFC6284D) : const Color(0xFF12965B),
           ),
         );
-
       }
 
       for (final raw in purchases) {
@@ -211,7 +217,6 @@ class _BillsScreenState extends State<BillsScreen> {
                 unpaid ? const Color(0xFFC6284D) : const Color(0xFF12965B),
           ),
         );
-
       }
 
       for (final raw in expenses) {
@@ -321,8 +326,8 @@ class _BillsScreenState extends State<BillsScreen> {
         final parsedNo = paymentNoRegex.firstMatch(note);
         final n = int.tryParse(parsedNo?.group(1) ?? '') ?? 0;
         final customerId = _toInt(m['customer_id']);
-        final date =
-            DateTime.tryParse((m['created_at'] ?? '').toString()) ?? DateTime.now();
+        final date = DateTime.tryParse((m['created_at'] ?? '').toString()) ??
+            DateTime.now();
         mapped.add(
           _BillEntry(
             id: _toInt(m['id']),
@@ -333,7 +338,8 @@ class _BillsScreenState extends State<BillsScreen> {
             date: date,
             amount: _toDouble(m['amount']),
             paymentMode: note.toLowerCase().contains('card') ? 'card' : 'cash',
-            paymentStatusLabel: note.toLowerCase().contains('card') ? 'Card' : 'Cash',
+            paymentStatusLabel:
+                note.toLowerCase().contains('card') ? 'Card' : 'Cash',
             statusColor: Colors.black87,
           ),
         );
@@ -346,8 +352,8 @@ class _BillsScreenState extends State<BillsScreen> {
         final parsedNo = paymentNoRegex.firstMatch(note);
         final n = int.tryParse(parsedNo?.group(1) ?? '') ?? 0;
         final supplierId = _toInt(m['supplier_id']);
-        final date =
-            DateTime.tryParse((m['created_at'] ?? '').toString()) ?? DateTime.now();
+        final date = DateTime.tryParse((m['created_at'] ?? '').toString()) ??
+            DateTime.now();
         mapped.add(
           _BillEntry(
             id: _toInt(m['id']),
@@ -358,7 +364,8 @@ class _BillsScreenState extends State<BillsScreen> {
             date: date,
             amount: _toDouble(m['amount']),
             paymentMode: note.toLowerCase().contains('card') ? 'card' : 'cash',
-            paymentStatusLabel: note.toLowerCase().contains('card') ? 'Card' : 'Cash',
+            paymentStatusLabel:
+                note.toLowerCase().contains('card') ? 'Card' : 'Cash',
             statusColor: Colors.black87,
           ),
         );
@@ -387,11 +394,15 @@ class _BillsScreenState extends State<BillsScreen> {
   List<_BillEntry> get _filtered {
     Iterable<_BillEntry> rows;
     if (_tab == 'sale') {
-      rows = _entries.where(
-          (e) => e.type == 'sale' || e.type == 'payment_in' || e.type == 'sale_return');
+      rows = _entries.where((e) =>
+          e.type == 'sale' ||
+          e.type == 'payment_in' ||
+          e.type == 'sale_return');
     } else if (_tab == 'purchase') {
-      rows = _entries
-          .where((e) => e.type == 'purchase' || e.type == 'payment_out' || e.type == 'purchase_return');
+      rows = _entries.where((e) =>
+          e.type == 'purchase' ||
+          e.type == 'payment_out' ||
+          e.type == 'purchase_return');
     } else {
       rows = _entries.where((e) => e.type == 'expense');
     }
@@ -614,7 +625,8 @@ class _BillsScreenState extends State<BillsScreen> {
                         MaterialPageRoute(
                           builder: (_) => AddBillPaymentScreen(
                             isPurchase: _tab == 'purchase',
-                            paymentNumber: nextPaymentNo <= 0 ? 1 : nextPaymentNo,
+                            paymentNumber:
+                                nextPaymentNo <= 0 ? 1 : nextPaymentNo,
                           ),
                         ),
                       );
@@ -692,7 +704,7 @@ class _BillsScreenState extends State<BillsScreen> {
               children: [
                 Row(
                   children: [
-                    const Icon(Icons.storefront_outlined, color: Colors.white),
+                    const AppBrandLogo(size: 22, textSize: 9, borderRadius: 6),
                     const SizedBox(width: 10),
                     Text(
                       _businessName,
@@ -704,6 +716,8 @@ class _BillsScreenState extends State<BillsScreen> {
                     ),
                     const SizedBox(width: 4),
                     const Icon(Icons.keyboard_arrow_down, color: Colors.white),
+                    const Spacer(),
+                    const SyncStatusChip(onDark: true, compact: true),
                   ],
                 ),
                 const SizedBox(height: 14),

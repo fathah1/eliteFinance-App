@@ -1,11 +1,18 @@
 import 'package:flutter/material.dart';
+import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../api.dart';
 
 class AddCustomerScreen extends StatefulWidget {
   final String? initialName;
   final String? initialPhone;
-  const AddCustomerScreen({super.key, this.initialName, this.initialPhone});
+  final String? initialPhotoPath;
+  const AddCustomerScreen({
+    super.key,
+    this.initialName,
+    this.initialPhone,
+    this.initialPhotoPath,
+  });
 
   @override
   State<AddCustomerScreen> createState() => _AddCustomerScreenState();
@@ -14,6 +21,7 @@ class AddCustomerScreen extends StatefulWidget {
 class _AddCustomerScreenState extends State<AddCustomerScreen> {
   final _nameController = TextEditingController();
   final _phoneController = TextEditingController();
+  String? _photoPath;
   String? _error;
   bool _loading = false;
 
@@ -26,6 +34,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
     if (widget.initialPhone != null) {
       _phoneController.text = widget.initialPhone!;
     }
+    _photoPath = widget.initialPhotoPath;
   }
 
   @override
@@ -68,6 +77,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
         phone: _phoneController.text.trim().isEmpty
             ? null
             : _phoneController.text.trim(),
+        photoPath: _photoPath,
       );
     } catch (e) {
       setState(() {
@@ -113,13 +123,18 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Row(
+                  Row(
                     children: [
                       CircleAvatar(
                         radius: 17,
                         backgroundColor: Color(0xFFEAF0FF),
-                        child: Icon(Icons.person_add_alt_1,
-                            color: Color(0xFF1E5EFF)),
+                        backgroundImage: _photoPath != null
+                            ? FileImage(File(_photoPath!))
+                            : null,
+                        child: _photoPath == null
+                            ? const Icon(Icons.person_add_alt_1,
+                                color: Color(0xFF1E5EFF))
+                            : null,
                       ),
                       SizedBox(width: 10),
                       Text(

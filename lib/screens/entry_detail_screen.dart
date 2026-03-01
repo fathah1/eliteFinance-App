@@ -159,30 +159,36 @@ class EntryDetailScreen extends StatelessWidget {
               ),
             ),
             const Spacer(),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: onDelete,
-                    icon: const Icon(Icons.delete, color: Colors.red),
-                    label: const Text('DELETE',
-                        style: TextStyle(color: Colors.red)),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () {},
-                    icon: const Icon(Icons.share),
-                    label: const Text('SHARE'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: brandBlue,
-                      foregroundColor: Colors.white,
+            SafeArea(
+              top: false,
+              minimum: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: onDelete,
+                      icon: const Icon(Icons.delete, color: Colors.red),
+                      label: const Text(
+                        'DELETE',
+                        style: TextStyle(color: Colors.red),
+                      ),
                     ),
                   ),
-                ),
-              ],
-            )
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () {},
+                      icon: const Icon(Icons.share),
+                      label: const Text('SHARE'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: brandBlue,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),

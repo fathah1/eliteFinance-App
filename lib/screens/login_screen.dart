@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../access_control.dart';
 import '../api.dart';
 import '../db.dart';
 import '../routes.dart';
+import '../widgets/app_brand_logo.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -16,6 +18,121 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController();
   bool _loading = false;
   String? _error;
+
+  List<int> _businessIdsFrom(dynamic raw) {
+    if (raw is! List) return const [];
+    return raw.map((e) => int.tryParse(e.toString())).whereType<int>().toList();
+  }
+
+  Future<Map<String, dynamic>?> _pickBusiness(
+    List<Map<String, dynamic>> businesses,
+  ) async {
+    return showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isDismissible: false,
+      enableDrag: false,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Select Business',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Choose the business you want to open.',
+                  style: TextStyle(color: Color(0xFF6D7486)),
+                ),
+                const SizedBox(height: 12),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 320),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: businesses.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final b = businesses[index];
+                      final name = (b['name'] ?? 'Business').toString();
+                      return ListTile(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: const BorderSide(color: Color(0xFFE2E8F1)),
+                        ),
+                        leading: const CircleAvatar(
+                          backgroundColor: Color(0xFFEAF0FF),
+                          child: Icon(Icons.storefront_outlined,
+                              color: Color(0xFF1E5EFF)),
+                        ),
+                        title: Text(name),
+                        onTap: () => Navigator.pop(context, b),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<bool> _resolveActiveBusiness(Map<String, dynamic> loginData) async {
+    final prefs = await SharedPreferences.getInstance();
+    final user = await Api.getUser();
+    final isSuper = AccessControl.isSuperUser(user);
+
+    final allBusinesses =
+        (await Api.getBusinesses()).cast<Map<String, dynamic>>();
+    if (allBusinesses.isEmpty) {
+      await prefs.remove('active_business_server_id');
+      await prefs.remove('active_business_name');
+      return true;
+    }
+
+    final allowedIds = _businessIdsFrom(
+      loginData['business_ids'] ?? user?['business_ids'],
+    );
+
+    List<Map<String, dynamic>> available = allBusinesses;
+    if (!isSuper && allowedIds.isNotEmpty) {
+      available = allBusinesses.where((b) {
+        final id = int.tryParse((b['id'] ?? '').toString());
+        return id != null && allowedIds.contains(id);
+      }).toList();
+    }
+
+    if (available.isEmpty) {
+      await prefs.remove('active_business_server_id');
+      await prefs.remove('active_business_name');
+      return true;
+    }
+
+    Map<String, dynamic>? selected;
+    if (available.length == 1) {
+      selected = available.first;
+    } else {
+      if (!mounted) return false;
+      selected = await _pickBusiness(available);
+      if (selected == null) return false;
+    }
+
+    final id = int.tryParse((selected['id'] ?? '').toString());
+    final name = (selected['name'] ?? 'Business').toString();
+    if (id != null) {
+      await prefs.setInt('active_business_server_id', id);
+      await prefs.setString('active_business_name', name);
+    }
+    return true;
+  }
 
   Future<void> _login() async {
     if (_usernameController.text.isEmpty) {
@@ -39,28 +156,10 @@ class _LoginScreenState extends State<LoginScreen> {
       if (data['user'] is Map<String, dynamic>) {
         await Db.instance.upsertUser(data['user'] as Map<String, dynamic>);
       }
-      if (data['business_ids'] is List &&
-          (data['business_ids'] as List).isNotEmpty) {
-        final ids = (data['business_ids'] as List)
-            .map((e) => int.tryParse(e.toString()))
-            .whereType<int>()
-            .toList();
-        if (ids.isNotEmpty) {
-          final businesses = await Api.getBusinesses();
-          if (businesses.isNotEmpty) {
-            final first = businesses.cast<Map<String, dynamic>>().firstWhere(
-                  (b) => ids.contains((b['id'] as num).toInt()),
-                  orElse: () => businesses.cast<Map<String, dynamic>>().first,
-                );
-            final prefs = await SharedPreferences.getInstance();
-            await prefs.setInt(
-                'active_business_server_id', (first['id'] as num).toInt());
-            await prefs.setString(
-              'active_business_name',
-              (first['name'] ?? 'Business').toString(),
-            );
-          }
-        }
+      final businessResolved = await _resolveActiveBusiness(data);
+      if (!businessResolved) {
+        setState(() => _loading = false);
+        return;
       }
 
       if (!mounted) return;
@@ -100,38 +199,10 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Column(
               children: [
                 const SizedBox(height: 12),
-                Container(
-                  width: 82,
-                  height: 82,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(22),
-                    gradient: const LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [Color(0xFF1E5EFF), Color(0xFF0B2B87)],
-                    ),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Color(0x331E5EFF),
-                        blurRadius: 20,
-                        offset: Offset(0, 10),
-                      ),
-                    ],
-                  ),
-                  alignment: Alignment.center,
-                  child: const Text(
-                    'EC',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 28,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1.2,
-                    ),
-                  ),
-                ),
+                const AppBrandLogo(size: 82, textSize: 28, borderRadius: 22),
                 const SizedBox(height: 14),
                 const Text(
-                  'ECbooks',
+                  'ECBooks',
                   style: TextStyle(
                     fontSize: 32,
                     fontWeight: FontWeight.w800,

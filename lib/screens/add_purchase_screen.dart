@@ -7,6 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api.dart';
+import '../app_events.dart';
 import 'add_supplier_screen.dart';
 import 'add_item_screen.dart';
 
@@ -133,7 +134,9 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> {
 
   bool get _canGeneratePurchase =>
       _purchaseAmount > 0 &&
-      (_paymentMode == 'unpaid' || _paymentMode == 'cash' || _paymentMode == 'card');
+      (_paymentMode == 'unpaid' ||
+          _paymentMode == 'cash' ||
+          _paymentMode == 'card');
 
   Future<void> _pickDate() async {
     final picked = await showDatePicker(
@@ -164,6 +167,7 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> {
   }
 
   Future<void> _openNotesAndPhotos() async {
+    const brandBlue = Color(0xFF0B4F9E);
     final noteController = TextEditingController(text: _privateNote);
     final tempPhotos = List<String>.from(_notePhotos);
     final picker = ImagePicker();
@@ -178,89 +182,124 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> {
         return StatefulBuilder(
           builder: (context, setSheet) {
             final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-            return Padding(
-              padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + bottomInset),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Expanded(
-                        child: Text(
-                          'Add Notes and Photos',
-                          style: TextStyle(
-                              fontSize: 34 / 2, fontWeight: FontWeight.w700),
+            return Container(
+              color: Colors.white,
+              child: SingleChildScrollView(
+                padding: EdgeInsets.fromLTRB(16, 12, 16, 16 + bottomInset),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 38,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFD9DFEA),
+                          borderRadius: BorderRadius.circular(20),
                         ),
                       ),
-                      IconButton(
-                        onPressed: () => Navigator.pop(context, false),
-                        icon: const Icon(Icons.close),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  const Text('Add Notes for your personal reference'),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: noteController,
-                    maxLines: 4,
-                    decoration: const InputDecoration(
-                      hintText: 'Enter your notes here',
-                      border: OutlineInputBorder(),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: List.generate(4, (index) {
-                      final hasPhoto = index < tempPhotos.length;
-                      return Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: InkWell(
-                            onTap: () async {
-                              if (hasPhoto) {
-                                setSheet(() => tempPhotos.removeAt(index));
-                                return;
-                              }
-                              final file = await picker.pickImage(
-                                source: ImageSource.gallery,
-                                imageQuality: 80,
-                              );
-                              if (file == null) return;
-                              setSheet(() => tempPhotos.add(file.path));
-                            },
-                            child: Container(
-                              height: 82,
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: Colors.black26),
-                              ),
-                              child: hasPhoto
-                                  ? ClipRRect(
-                                      borderRadius: BorderRadius.circular(12),
-                                      child: Image.file(
-                                        File(tempPhotos[index]),
-                                        fit: BoxFit.cover,
-                                      ),
-                                    )
-                                  : const Icon(Icons.add_a_photo_outlined,
-                                      color: Colors.black38),
-                            ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Add Notes and Photos',
+                            style: TextStyle(
+                                fontSize: 20, fontWeight: FontWeight.w700),
                           ),
                         ),
-                      );
-                    }),
-                  ),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      child: const Text('SAVE'),
+                        IconButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Add Notes for your personal reference',
+                      style: TextStyle(color: Color(0xFF6F7786)),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: noteController,
+                      maxLines: 4,
+                      decoration: InputDecoration(
+                        hintText: 'Enter your notes here',
+                        filled: true,
+                        fillColor: const Color(0xFFF7F9FC),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: List.generate(4, (index) {
+                        final hasPhoto = index < tempPhotos.length;
+                        return Expanded(
+                          child: Padding(
+                            padding: EdgeInsets.only(right: index == 3 ? 0 : 8),
+                            child: InkWell(
+                              onTap: () async {
+                                if (hasPhoto) {
+                                  setSheet(() => tempPhotos.removeAt(index));
+                                  return;
+                                }
+                                final file = await picker.pickImage(
+                                  source: ImageSource.gallery,
+                                  imageQuality: 80,
+                                );
+                                if (file == null) return;
+                                setSheet(() => tempPhotos.add(file.path));
+                              },
+                              child: Container(
+                                height: 82,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                      color: const Color(0xFFCFD6E3)),
+                                  color: const Color(0xFFF8FAFD),
+                                ),
+                                child: hasPhoto
+                                    ? ClipRRect(
+                                        borderRadius: BorderRadius.circular(12),
+                                        child: Image.file(
+                                          File(tempPhotos[index]),
+                                          fit: BoxFit.cover,
+                                        ),
+                                      )
+                                    : const Icon(Icons.add_a_photo_outlined,
+                                        color: Color(0xFF8D96A8)),
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: brandBlue,
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size.fromHeight(50),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text(
+                          'SAVE',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             );
           },
@@ -600,6 +639,7 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> {
       lowStockAlert: (data['lowStockAlert'] as int?) ?? 0,
       photoPath: data['photoPath'] as String?,
     );
+    AppEvents.notifyItemsChanged();
 
     if (!mounted) return;
     await _openInventoryPicker();
@@ -1412,6 +1452,7 @@ class _InventoryPickerSheetState extends State<_InventoryPickerSheet> {
       lowStockAlert: (data['lowStockAlert'] as int?) ?? 0,
       photoPath: data['photoPath'] as String?,
     );
+    AppEvents.notifyItemsChanged();
 
     if (!mounted) return;
     await _load();
@@ -1425,7 +1466,14 @@ class _InventoryPickerSheetState extends State<_InventoryPickerSheet> {
       return {
         'id': item['id'] as int,
         'name': (item['name'] ?? '').toString(),
-        'price': double.tryParse((item['sale_price'] ?? '0').toString()) ?? 0,
+        'price': double.tryParse(
+              (item['last_purchase_price'] ??
+                      item['purchase_price'] ??
+                      item['sale_price'] ??
+                      '0')
+                  .toString(),
+            ) ??
+            0,
         'currentStock': (item['current_stock'] ?? 0) as int,
         'photoUrl': photo.isEmpty
             ? null
@@ -1551,7 +1599,12 @@ class _InventoryPickerSheetState extends State<_InventoryPickerSheet> {
                       final name = (item['name'] ?? '').toString();
                       final stock = (item['current_stock'] ?? 0) as int;
                       final price = double.tryParse(
-                              (item['sale_price'] ?? '0').toString()) ??
+                            (item['last_purchase_price'] ??
+                                    item['purchase_price'] ??
+                                    item['sale_price'] ??
+                                    '0')
+                                .toString(),
+                          ) ??
                           0;
                       final photo = (item['photo_path'] ?? '').toString();
                       final selected = _selectedIds.contains(id);
@@ -1596,7 +1649,7 @@ class _InventoryPickerSheetState extends State<_InventoryPickerSheet> {
                                           crossAxisAlignment:
                                               CrossAxisAlignment.start,
                                           children: [
-                                            const Text('Sales Price',
+                                            const Text('Last Purchase Price',
                                                 style: TextStyle(
                                                     color: Colors.black54)),
                                             const SizedBox(height: 2),
@@ -1744,7 +1797,8 @@ class _BillSupplierPickerSheet extends StatefulWidget {
   const _BillSupplierPickerSheet();
 
   @override
-  State<_BillSupplierPickerSheet> createState() => _BillSupplierPickerSheetState();
+  State<_BillSupplierPickerSheet> createState() =>
+      _BillSupplierPickerSheetState();
 }
 
 class _BillSupplierPickerSheetState extends State<_BillSupplierPickerSheet> {

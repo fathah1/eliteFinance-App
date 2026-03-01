@@ -4,6 +4,7 @@ import 'screens/add_entry_screen.dart';
 import 'screens/add_supplier_entry_screen.dart';
 import 'screens/add_supplier_screen.dart';
 import 'screens/contacts_import_screen.dart';
+import 'screens/add_business_screen.dart';
 import 'screens/business_switch_screen.dart';
 import 'screens/main_shell.dart';
 import 'screens/customer_ledger_screen.dart';
@@ -27,6 +28,7 @@ class AppRoutes {
   static const reports = '/reports';
   static const settings = '/settings';
   static const businesses = '/businesses';
+  static const addBusiness = '/businesses/add';
   static const addSupplier = '/suppliers/add';
   static const supplierLedger = '/suppliers/ledger';
   static const addSupplierEntry = '/suppliers/entries/add';
@@ -85,6 +87,8 @@ class AppRoutes {
         return MaterialPageRoute(builder: (_) => const SettingsScreen());
       case businesses:
         return MaterialPageRoute(builder: (_) => const BusinessSwitchScreen());
+      case addBusiness:
+        return MaterialPageRoute(builder: (_) => const AddBusinessScreen());
       case addSupplier:
         final args = _args(routeSettings);
         return MaterialPageRoute(

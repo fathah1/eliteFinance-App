@@ -1,11 +1,60 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'offline_queue.dart';
+
 class Api {
-  static const String baseUrl =
-      'https://eliteposs.com/financeserver/public/api';
+  static const String publicBaseUrl =
+      'https://eliteposs.com/financeserver/public';
+  static const String _publicOrigin = 'https://eliteposs.com';
+  static const String _sharedHostMediaBase =
+      'https://eliteposs.com/financeserver/storage/app/public';
+  static const String baseUrl = '$publicBaseUrl/api';
+
+  static String? resolveMediaUrl(dynamic rawValue) {
+    if (rawValue == null) return null;
+    var raw = rawValue.toString().trim();
+    if (raw.isEmpty || raw.toLowerCase() == 'null') return null;
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      final uri = Uri.tryParse(raw);
+      if (uri == null) return raw;
+      final host = uri.host.toLowerCase();
+      final isLocalHost =
+          host == 'localhost' || host == '127.0.0.1' || host == '10.0.2.2';
+      if (!isLocalHost) return raw;
+
+      final path = uri.path;
+      const appPrefix = '/financeserver/public';
+      final appIdx = path.indexOf(appPrefix);
+      if (appIdx >= 0) {
+        return '$_publicOrigin${path.substring(appIdx)}';
+      }
+      final storageIdx = path.indexOf('/storage/');
+      if (storageIdx >= 0) {
+        return '$_publicOrigin/financeserver${path.substring(storageIdx)}';
+      }
+      return raw;
+    }
+
+    raw = raw.replaceAll('\\', '/');
+    while (raw.startsWith('/')) {
+      raw = raw.substring(1);
+    }
+    if (raw.startsWith('public/')) {
+      raw = raw.substring('public/'.length);
+    }
+    if (raw.startsWith('storage/app/public/')) {
+      raw = raw.substring('storage/app/public/'.length);
+      return '$_sharedHostMediaBase/$raw';
+    }
+    if (raw.startsWith('storage/')) {
+      raw = raw.substring('storage/'.length);
+    }
+    return '$_sharedHostMediaBase/$raw';
+  }
 
   static List<dynamic> _onlyLive(List<dynamic> rows) {
     return rows.where((row) {
@@ -24,6 +73,49 @@ class Api {
       if (data is List) return _onlyLive(data);
     }
     return const [];
+  }
+
+  static bool _isNetworkError(Object e) {
+    return e is SocketException ||
+        e is HandshakeException ||
+        e is http.ClientException;
+  }
+
+  static int _tempOfflineId() => -DateTime.now().millisecondsSinceEpoch;
+
+  static Future<void> _cacheSet(String key, dynamic data) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('cache_$key', jsonEncode(data));
+  }
+
+  static Future<dynamic> _cacheGet(String key) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('cache_$key');
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      return jsonDecode(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<List<dynamic>> _getCachedLiveList(String key) async {
+    final cached = await _cacheGet(key);
+    return _extractLiveList(cached);
+  }
+
+  static Future<Map<String, dynamic>> _getCachedMap(String key) async {
+    final cached = await _cacheGet(key);
+    if (cached is Map<String, dynamic>) return cached;
+    if (cached is Map) return Map<String, dynamic>.from(cached);
+    return {};
+  }
+
+  static Future<void> _prependCachedList(
+      String key, Map<String, dynamic> row) async {
+    final current = await _getCachedLiveList(key);
+    final next = <dynamic>[row, ...current];
+    await _cacheSet(key, next);
   }
 
   static Future<String?> getToken() async {
@@ -185,20 +277,28 @@ class Api {
   }
 
   static Future<List<dynamic>> getBusinesses() async {
-    final token = await getToken();
-    final res = await http.get(
-      Uri.parse('$baseUrl/businesses'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
+    const cacheKey = 'businesses';
+    try {
+      final token = await getToken();
+      final res = await http.get(
+        Uri.parse('$baseUrl/businesses'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
 
-    if (res.statusCode != 200) {
-      throw Exception('Fetch businesses failed: ${res.body}');
+      if (res.statusCode != 200) {
+        throw Exception('Fetch businesses failed: ${res.body}');
+      }
+
+      final decoded = jsonDecode(res.body);
+      await _cacheSet(cacheKey, decoded);
+      return _extractLiveList(decoded);
+    } catch (e) {
+      if (!_isNetworkError(e)) rethrow;
+      return _getCachedLiveList(cacheKey);
     }
-
-    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<Map<String, dynamic>> createBusiness({
@@ -240,59 +340,153 @@ class Api {
   static Future<List<dynamic>> getCustomers({
     required int businessId,
   }) async {
-    final token = await getToken();
-    final res = await http.get(
-      Uri.parse('$baseUrl/customers?business_id=$businessId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
+    final cacheKey = 'customers_b_$businessId';
+    try {
+      final token = await getToken();
+      final res = await http.get(
+        Uri.parse('$baseUrl/customers?business_id=$businessId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
 
-    if (res.statusCode != 200) {
-      throw Exception('Fetch customers failed: ${res.body}');
+      if (res.statusCode != 200) {
+        throw Exception('Fetch customers failed: ${res.body}');
+      }
+
+      final decoded = jsonDecode(res.body);
+      await _cacheSet(cacheKey, decoded);
+      return _extractLiveList(decoded);
+    } catch (e) {
+      if (!_isNetworkError(e)) rethrow;
+      return _getCachedLiveList(cacheKey);
     }
-
-    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<Map<String, dynamic>> createCustomer({
     required int businessId,
     required String name,
     String? phone,
+    String? photoPath,
+    bool queueOnFailure = true,
   }) async {
-    final token = await getToken();
-    final res = await http.post(
-      Uri.parse('$baseUrl/customers'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: jsonEncode({
+    try {
+      final token = await getToken();
+      final req =
+          http.MultipartRequest('POST', Uri.parse('$baseUrl/customers'));
+      req.headers['Authorization'] = 'Bearer $token';
+      req.headers['Accept'] = 'application/json';
+      req.fields['business_id'] = businessId.toString();
+      req.fields['name'] = name;
+      if (phone != null && phone.trim().isNotEmpty) {
+        req.fields['phone'] = phone.trim();
+      }
+      if (photoPath != null && photoPath.trim().isNotEmpty) {
+        req.files.add(await http.MultipartFile.fromPath('photo', photoPath));
+      }
+      final res = await req.send();
+      final body = await res.stream.bytesToString();
+      if (res.statusCode != 201) {
+        throw Exception('Create customer failed: $body');
+      }
+      final created = jsonDecode(body) as Map<String, dynamic>;
+      await _prependCachedList('customers_b_$businessId', created);
+      return created;
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'customer.create',
+        payload: {
+          'businessId': businessId,
+          'name': name,
+          'phone': phone,
+          'photoPath': photoPath,
+        },
+      );
+      final local = {
+        'id': _tempOfflineId(),
         'business_id': businessId,
         'name': name,
         'phone': phone,
-      }),
-    );
-
-    if (res.statusCode != 201) {
-      throw Exception('Create customer failed: ${res.body}');
+        'offline_queued': true,
+      };
+      await _prependCachedList('customers_b_$businessId', local);
+      return local;
     }
-    return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
-  static Future<void> deleteCustomer(int customerId) async {
-    final token = await getToken();
-    final res = await http.delete(
-      Uri.parse('$baseUrl/customers/$customerId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
-    if (res.statusCode != 200) {
-      throw Exception('Delete customer failed: ${res.body}');
+  static Future<void> deleteCustomer(
+    int customerId, {
+    bool queueOnFailure = true,
+  }) async {
+    try {
+      final token = await getToken();
+      final res = await http.delete(
+        Uri.parse('$baseUrl/customers/$customerId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
+      if (res.statusCode != 200) {
+        throw Exception('Delete customer failed: ${res.body}');
+      }
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'customer.delete',
+        payload: {'customerId': customerId},
+      );
+    }
+  }
+
+  static Future<Map<String, dynamic>> updateCustomer({
+    required int customerId,
+    required String name,
+    String? phone,
+    String? photoPath,
+    bool queueOnFailure = true,
+  }) async {
+    try {
+      final token = await getToken();
+      final req = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/customers/$customerId'),
+      );
+      req.headers['Authorization'] = 'Bearer $token';
+      req.headers['Accept'] = 'application/json';
+      req.fields['_method'] = 'PUT';
+      req.fields['name'] = name;
+      if (phone != null && phone.trim().isNotEmpty) {
+        req.fields['phone'] = phone.trim();
+      }
+      if (photoPath != null && photoPath.trim().isNotEmpty) {
+        req.files.add(await http.MultipartFile.fromPath('photo', photoPath));
+      }
+      final res = await req.send();
+      final body = await res.stream.bytesToString();
+      if (res.statusCode != 200) {
+        throw Exception('Update customer failed: $body');
+      }
+      return jsonDecode(body) as Map<String, dynamic>;
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'customer.update',
+        payload: {
+          'customerId': customerId,
+          'name': name,
+          'phone': phone,
+          'photoPath': photoPath,
+        },
+      );
+      return {
+        'id': customerId,
+        'name': name,
+        'phone': phone,
+        'offline_queued': true,
+      };
     }
   }
 
@@ -304,30 +498,63 @@ class Api {
     String? note,
     String? createdAt,
     String? attachmentPath,
+    bool queueOnFailure = true,
   }) async {
-    final token = await getToken();
-    final uri = Uri.parse('$baseUrl/transactions');
-    final req = http.MultipartRequest('POST', uri);
-    req.headers['Authorization'] = 'Bearer $token';
-    req.headers['Accept'] = 'application/json';
-    req.fields['business_id'] = businessId.toString();
-    req.fields['customer_id'] = customerId.toString();
-    req.fields['amount'] = amount.toString();
-    req.fields['type'] = type;
-    if (note != null) req.fields['note'] = note;
-    if (createdAt != null) req.fields['created_at'] = createdAt;
-    if (attachmentPath != null) {
-      req.files.add(await http.MultipartFile.fromPath(
-        'attachment',
-        attachmentPath,
-      ));
+    try {
+      final token = await getToken();
+      final uri = Uri.parse('$baseUrl/transactions');
+      final req = http.MultipartRequest('POST', uri);
+      req.headers['Authorization'] = 'Bearer $token';
+      req.headers['Accept'] = 'application/json';
+      req.fields['business_id'] = businessId.toString();
+      req.fields['customer_id'] = customerId.toString();
+      req.fields['amount'] = amount.toString();
+      req.fields['type'] = type;
+      if (note != null) req.fields['note'] = note;
+      if (createdAt != null) req.fields['created_at'] = createdAt;
+      if (attachmentPath != null) {
+        req.files.add(await http.MultipartFile.fromPath(
+          'attachment',
+          attachmentPath,
+        ));
+      }
+      final res = await req.send();
+      final body = await res.stream.bytesToString();
+      if (res.statusCode != 201) {
+        throw Exception('Create transaction failed: $body');
+      }
+      final created = jsonDecode(body) as Map<String, dynamic>;
+      await _prependCachedList('customer_tx_c_$customerId', created);
+      await _prependCachedList('transactions_b_$businessId', created);
+      return created;
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'transaction.create',
+        payload: {
+          'businessId': businessId,
+          'customerId': customerId,
+          'amount': amount,
+          'type': type,
+          'note': note,
+          'createdAt': createdAt,
+          'attachmentPath': attachmentPath,
+        },
+      );
+      final local = {
+        'id': _tempOfflineId(),
+        'business_id': businessId,
+        'customer_id': customerId,
+        'amount': amount,
+        'type': type,
+        'note': note,
+        'created_at': createdAt ?? DateTime.now().toIso8601String(),
+        'offline_queued': true,
+      };
+      await _prependCachedList('customer_tx_c_$customerId', local);
+      await _prependCachedList('transactions_b_$businessId', local);
+      return local;
     }
-    final res = await req.send();
-    final body = await res.stream.bytesToString();
-    if (res.statusCode != 201) {
-      throw Exception('Create transaction failed: $body');
-    }
-    return jsonDecode(body) as Map<String, dynamic>;
   }
 
   static Future<Map<String, dynamic>> updateTransaction({
@@ -337,160 +564,311 @@ class Api {
     String? note,
     String? createdAt,
     String? attachmentPath,
+    bool queueOnFailure = true,
   }) async {
-    final token = await getToken();
-    final uri = Uri.parse('$baseUrl/transactions/$transactionId');
-    final req = http.MultipartRequest('POST', uri);
-    req.headers['Authorization'] = 'Bearer $token';
-    req.headers['Accept'] = 'application/json';
-    req.fields['_method'] = 'PUT';
-    req.fields['amount'] = amount.toString();
-    req.fields['type'] = type;
-    if (note != null) req.fields['note'] = note;
-    if (createdAt != null) req.fields['created_at'] = createdAt;
-    if (attachmentPath != null) {
-      req.files.add(await http.MultipartFile.fromPath(
-        'attachment',
-        attachmentPath,
-      ));
+    try {
+      final token = await getToken();
+      final uri = Uri.parse('$baseUrl/transactions/$transactionId');
+      final req = http.MultipartRequest('POST', uri);
+      req.headers['Authorization'] = 'Bearer $token';
+      req.headers['Accept'] = 'application/json';
+      req.fields['_method'] = 'PUT';
+      req.fields['amount'] = amount.toString();
+      req.fields['type'] = type;
+      if (note != null) req.fields['note'] = note;
+      if (createdAt != null) req.fields['created_at'] = createdAt;
+      if (attachmentPath != null) {
+        req.files.add(await http.MultipartFile.fromPath(
+          'attachment',
+          attachmentPath,
+        ));
+      }
+      final res = await req.send();
+      final body = await res.stream.bytesToString();
+      if (res.statusCode != 200) {
+        throw Exception('Update transaction failed: $body');
+      }
+      return jsonDecode(body) as Map<String, dynamic>;
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'transaction.update',
+        payload: {
+          'transactionId': transactionId,
+          'amount': amount,
+          'type': type,
+          'note': note,
+          'createdAt': createdAt,
+          'attachmentPath': attachmentPath,
+        },
+      );
+      return {
+        'id': transactionId,
+        'amount': amount,
+        'type': type,
+        'note': note,
+        'created_at': createdAt ?? DateTime.now().toIso8601String(),
+        'offline_queued': true,
+      };
     }
-    final res = await req.send();
-    final body = await res.stream.bytesToString();
-    if (res.statusCode != 200) {
-      throw Exception('Update transaction failed: $body');
-    }
-    return jsonDecode(body) as Map<String, dynamic>;
   }
 
-  static Future<void> deleteTransaction(int transactionId) async {
-    final token = await getToken();
-    final res = await http.delete(
-      Uri.parse('$baseUrl/transactions/$transactionId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
+  static Future<void> deleteTransaction(
+    int transactionId, {
+    bool queueOnFailure = true,
+  }) async {
+    try {
+      final token = await getToken();
+      final res = await http.delete(
+        Uri.parse('$baseUrl/transactions/$transactionId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
 
-    if (res.statusCode != 200) {
-      throw Exception('Delete transaction failed: ${res.body}');
+      if (res.statusCode != 200) {
+        throw Exception('Delete transaction failed: ${res.body}');
+      }
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'transaction.delete',
+        payload: {'transactionId': transactionId},
+      );
     }
   }
 
   static Future<List<dynamic>> getAllTransactions({
     required int businessId,
   }) async {
-    final token = await getToken();
-    final res = await http.get(
-      Uri.parse('$baseUrl/transactions?business_id=$businessId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
+    final cacheKey = 'transactions_b_$businessId';
+    try {
+      final token = await getToken();
+      final res = await http.get(
+        Uri.parse('$baseUrl/transactions?business_id=$businessId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
 
-    if (res.statusCode != 200) {
-      throw Exception('Fetch transactions failed: ${res.body}');
+      if (res.statusCode != 200) {
+        throw Exception('Fetch transactions failed: ${res.body}');
+      }
+
+      final decoded = jsonDecode(res.body);
+      await _cacheSet(cacheKey, decoded);
+      return _extractLiveList(decoded);
+    } catch (e) {
+      if (!_isNetworkError(e)) rethrow;
+      return _getCachedLiveList(cacheKey);
     }
-
-    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<List<dynamic>> getSuppliers({
     required int businessId,
   }) async {
-    final token = await getToken();
-    final res = await http.get(
-      Uri.parse('$baseUrl/suppliers?business_id=$businessId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
+    final cacheKey = 'suppliers_b_$businessId';
+    try {
+      final token = await getToken();
+      final res = await http.get(
+        Uri.parse('$baseUrl/suppliers?business_id=$businessId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
 
-    if (res.statusCode != 200) {
-      throw Exception('Fetch suppliers failed: ${res.body}');
+      if (res.statusCode != 200) {
+        throw Exception('Fetch suppliers failed: ${res.body}');
+      }
+
+      final decoded = jsonDecode(res.body);
+      await _cacheSet(cacheKey, decoded);
+      return _extractLiveList(decoded);
+    } catch (e) {
+      if (!_isNetworkError(e)) rethrow;
+      return _getCachedLiveList(cacheKey);
     }
-
-    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<Map<String, dynamic>> createSupplier({
     required int businessId,
     required String name,
     String? phone,
+    String? photoPath,
+    bool queueOnFailure = true,
   }) async {
-    final token = await getToken();
-    final res = await http.post(
-      Uri.parse('$baseUrl/suppliers'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: jsonEncode({
+    try {
+      final token = await getToken();
+      final req =
+          http.MultipartRequest('POST', Uri.parse('$baseUrl/suppliers'));
+      req.headers['Authorization'] = 'Bearer $token';
+      req.headers['Accept'] = 'application/json';
+      req.fields['business_id'] = businessId.toString();
+      req.fields['name'] = name;
+      if (phone != null && phone.trim().isNotEmpty) {
+        req.fields['phone'] = phone.trim();
+      }
+      if (photoPath != null && photoPath.trim().isNotEmpty) {
+        req.files.add(await http.MultipartFile.fromPath('photo', photoPath));
+      }
+      final res = await req.send();
+      final body = await res.stream.bytesToString();
+      if (res.statusCode != 201) {
+        throw Exception('Create supplier failed: $body');
+      }
+      final created = jsonDecode(body) as Map<String, dynamic>;
+      await _prependCachedList('suppliers_b_$businessId', created);
+      return created;
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'supplier.create',
+        payload: {
+          'businessId': businessId,
+          'name': name,
+          'phone': phone,
+          'photoPath': photoPath,
+        },
+      );
+      final local = {
+        'id': _tempOfflineId(),
         'business_id': businessId,
         'name': name,
         'phone': phone,
-      }),
-    );
-
-    if (res.statusCode != 201) {
-      throw Exception('Create supplier failed: ${res.body}');
+        'offline_queued': true,
+      };
+      await _prependCachedList('suppliers_b_$businessId', local);
+      return local;
     }
-    return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
-  static Future<void> deleteSupplier(int supplierId) async {
-    final token = await getToken();
-    final res = await http.delete(
-      Uri.parse('$baseUrl/suppliers/$supplierId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
-    if (res.statusCode != 200) {
-      throw Exception('Delete supplier failed: ${res.body}');
+  static Future<void> deleteSupplier(
+    int supplierId, {
+    bool queueOnFailure = true,
+  }) async {
+    try {
+      final token = await getToken();
+      final res = await http.delete(
+        Uri.parse('$baseUrl/suppliers/$supplierId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
+      if (res.statusCode != 200) {
+        throw Exception('Delete supplier failed: ${res.body}');
+      }
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'supplier.delete',
+        payload: {'supplierId': supplierId},
+      );
+    }
+  }
+
+  static Future<Map<String, dynamic>> updateSupplier({
+    required int supplierId,
+    required String name,
+    String? phone,
+    String? photoPath,
+    bool queueOnFailure = true,
+  }) async {
+    try {
+      final token = await getToken();
+      final req = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/suppliers/$supplierId'),
+      );
+      req.headers['Authorization'] = 'Bearer $token';
+      req.headers['Accept'] = 'application/json';
+      req.fields['_method'] = 'PUT';
+      req.fields['name'] = name;
+      if (phone != null && phone.trim().isNotEmpty) {
+        req.fields['phone'] = phone.trim();
+      }
+      if (photoPath != null && photoPath.trim().isNotEmpty) {
+        req.files.add(await http.MultipartFile.fromPath('photo', photoPath));
+      }
+      final res = await req.send();
+      final body = await res.stream.bytesToString();
+      if (res.statusCode != 200) {
+        throw Exception('Update supplier failed: $body');
+      }
+      return jsonDecode(body) as Map<String, dynamic>;
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'supplier.update',
+        payload: {
+          'supplierId': supplierId,
+          'name': name,
+          'phone': phone,
+          'photoPath': photoPath,
+        },
+      );
+      return {
+        'id': supplierId,
+        'name': name,
+        'phone': phone,
+        'offline_queued': true,
+      };
     }
   }
 
   static Future<List<dynamic>> getAllSupplierTransactions({
     required int businessId,
   }) async {
-    final token = await getToken();
-    final res = await http.get(
-      Uri.parse('$baseUrl/supplier-transactions?business_id=$businessId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
+    final cacheKey = 'supplier_transactions_b_$businessId';
+    try {
+      final token = await getToken();
+      final res = await http.get(
+        Uri.parse('$baseUrl/supplier-transactions?business_id=$businessId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
 
-    if (res.statusCode != 200) {
-      throw Exception('Fetch supplier transactions failed: ${res.body}');
+      if (res.statusCode != 200) {
+        throw Exception('Fetch supplier transactions failed: ${res.body}');
+      }
+      final decoded = jsonDecode(res.body);
+      await _cacheSet(cacheKey, decoded);
+      return _extractLiveList(decoded);
+    } catch (e) {
+      if (!_isNetworkError(e)) rethrow;
+      return _getCachedLiveList(cacheKey);
     }
-
-    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<List<dynamic>> getSupplierTransactions({
     required int supplierId,
   }) async {
-    final token = await getToken();
-    final res = await http.get(
-      Uri.parse('$baseUrl/suppliers/$supplierId/transactions'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
+    final cacheKey = 'supplier_tx_s_$supplierId';
+    try {
+      final token = await getToken();
+      final res = await http.get(
+        Uri.parse('$baseUrl/suppliers/$supplierId/transactions'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
 
-    if (res.statusCode != 200) {
-      throw Exception('Fetch supplier transactions failed: ${res.body}');
+      if (res.statusCode != 200) {
+        throw Exception('Fetch supplier transactions failed: ${res.body}');
+      }
+      final decoded = jsonDecode(res.body);
+      await _cacheSet(cacheKey, decoded);
+      return _extractLiveList(decoded);
+    } catch (e) {
+      if (!_isNetworkError(e)) rethrow;
+      return _getCachedLiveList(cacheKey);
     }
-
-    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<Map<String, dynamic>> createSupplierTransaction({
@@ -501,30 +879,63 @@ class Api {
     String? note,
     String? createdAt,
     String? attachmentPath,
+    bool queueOnFailure = true,
   }) async {
-    final token = await getToken();
-    final uri = Uri.parse('$baseUrl/supplier-transactions');
-    final req = http.MultipartRequest('POST', uri);
-    req.headers['Authorization'] = 'Bearer $token';
-    req.headers['Accept'] = 'application/json';
-    req.fields['business_id'] = businessId.toString();
-    req.fields['supplier_id'] = supplierId.toString();
-    req.fields['amount'] = amount.toString();
-    req.fields['type'] = type;
-    if (note != null) req.fields['note'] = note;
-    if (createdAt != null) req.fields['created_at'] = createdAt;
-    if (attachmentPath != null) {
-      req.files.add(await http.MultipartFile.fromPath(
-        'attachment',
-        attachmentPath,
-      ));
+    try {
+      final token = await getToken();
+      final uri = Uri.parse('$baseUrl/supplier-transactions');
+      final req = http.MultipartRequest('POST', uri);
+      req.headers['Authorization'] = 'Bearer $token';
+      req.headers['Accept'] = 'application/json';
+      req.fields['business_id'] = businessId.toString();
+      req.fields['supplier_id'] = supplierId.toString();
+      req.fields['amount'] = amount.toString();
+      req.fields['type'] = type;
+      if (note != null) req.fields['note'] = note;
+      if (createdAt != null) req.fields['created_at'] = createdAt;
+      if (attachmentPath != null) {
+        req.files.add(await http.MultipartFile.fromPath(
+          'attachment',
+          attachmentPath,
+        ));
+      }
+      final res = await req.send();
+      final body = await res.stream.bytesToString();
+      if (res.statusCode != 201) {
+        throw Exception('Create supplier transaction failed: $body');
+      }
+      final created = jsonDecode(body) as Map<String, dynamic>;
+      await _prependCachedList('supplier_tx_s_$supplierId', created);
+      await _prependCachedList('supplier_transactions_b_$businessId', created);
+      return created;
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'supplier_transaction.create',
+        payload: {
+          'businessId': businessId,
+          'supplierId': supplierId,
+          'amount': amount,
+          'type': type,
+          'note': note,
+          'createdAt': createdAt,
+          'attachmentPath': attachmentPath,
+        },
+      );
+      final local = {
+        'id': _tempOfflineId(),
+        'business_id': businessId,
+        'supplier_id': supplierId,
+        'amount': amount,
+        'type': type,
+        'note': note,
+        'created_at': createdAt ?? DateTime.now().toIso8601String(),
+        'offline_queued': true,
+      };
+      await _prependCachedList('supplier_tx_s_$supplierId', local);
+      await _prependCachedList('supplier_transactions_b_$businessId', local);
+      return local;
     }
-    final res = await req.send();
-    final body = await res.stream.bytesToString();
-    if (res.statusCode != 201) {
-      throw Exception('Create supplier transaction failed: $body');
-    }
-    return jsonDecode(body) as Map<String, dynamic>;
   }
 
   static Future<Map<String, dynamic>> updateSupplierTransaction({
@@ -534,83 +945,134 @@ class Api {
     String? note,
     String? createdAt,
     String? attachmentPath,
+    bool queueOnFailure = true,
   }) async {
-    final token = await getToken();
-    final uri = Uri.parse('$baseUrl/supplier-transactions/$transactionId');
-    final req = http.MultipartRequest('POST', uri);
-    req.headers['Authorization'] = 'Bearer $token';
-    req.headers['Accept'] = 'application/json';
-    req.fields['_method'] = 'PUT';
-    req.fields['amount'] = amount.toString();
-    req.fields['type'] = type;
-    if (note != null) req.fields['note'] = note;
-    if (createdAt != null) req.fields['created_at'] = createdAt;
-    if (attachmentPath != null) {
-      req.files.add(await http.MultipartFile.fromPath(
-        'attachment',
-        attachmentPath,
-      ));
+    try {
+      final token = await getToken();
+      final uri = Uri.parse('$baseUrl/supplier-transactions/$transactionId');
+      final req = http.MultipartRequest('POST', uri);
+      req.headers['Authorization'] = 'Bearer $token';
+      req.headers['Accept'] = 'application/json';
+      req.fields['_method'] = 'PUT';
+      req.fields['amount'] = amount.toString();
+      req.fields['type'] = type;
+      if (note != null) req.fields['note'] = note;
+      if (createdAt != null) req.fields['created_at'] = createdAt;
+      if (attachmentPath != null) {
+        req.files.add(await http.MultipartFile.fromPath(
+          'attachment',
+          attachmentPath,
+        ));
+      }
+      final res = await req.send();
+      final body = await res.stream.bytesToString();
+      if (res.statusCode != 200) {
+        throw Exception('Update supplier transaction failed: $body');
+      }
+      return jsonDecode(body) as Map<String, dynamic>;
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'supplier_transaction.update',
+        payload: {
+          'transactionId': transactionId,
+          'amount': amount,
+          'type': type,
+          'note': note,
+          'createdAt': createdAt,
+          'attachmentPath': attachmentPath,
+        },
+      );
+      return {
+        'id': transactionId,
+        'amount': amount,
+        'type': type,
+        'note': note,
+        'created_at': createdAt ?? DateTime.now().toIso8601String(),
+        'offline_queued': true,
+      };
     }
-    final res = await req.send();
-    final body = await res.stream.bytesToString();
-    if (res.statusCode != 200) {
-      throw Exception('Update supplier transaction failed: $body');
-    }
-    return jsonDecode(body) as Map<String, dynamic>;
   }
 
-  static Future<void> deleteSupplierTransaction(int transactionId) async {
-    final token = await getToken();
-    final res = await http.delete(
-      Uri.parse('$baseUrl/supplier-transactions/$transactionId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
+  static Future<void> deleteSupplierTransaction(
+    int transactionId, {
+    bool queueOnFailure = true,
+  }) async {
+    try {
+      final token = await getToken();
+      final res = await http.delete(
+        Uri.parse('$baseUrl/supplier-transactions/$transactionId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
 
-    if (res.statusCode != 200) {
-      throw Exception('Delete supplier transaction failed: ${res.body}');
+      if (res.statusCode != 200) {
+        throw Exception('Delete supplier transaction failed: ${res.body}');
+      }
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'supplier_transaction.delete',
+        payload: {'transactionId': transactionId},
+      );
     }
   }
 
   static Future<List<dynamic>> getCustomerTransactions({
     required int customerId,
   }) async {
-    final token = await getToken();
-    final res = await http.get(
-      Uri.parse('$baseUrl/customers/$customerId/transactions'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
+    final cacheKey = 'customer_tx_c_$customerId';
+    try {
+      final token = await getToken();
+      final res = await http.get(
+        Uri.parse('$baseUrl/customers/$customerId/transactions'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
 
-    if (res.statusCode != 200) {
-      throw Exception('Fetch customer transactions failed: ${res.body}');
+      if (res.statusCode != 200) {
+        throw Exception('Fetch customer transactions failed: ${res.body}');
+      }
+
+      final decoded = jsonDecode(res.body);
+      await _cacheSet(cacheKey, decoded);
+      return _extractLiveList(decoded);
+    } catch (e) {
+      if (!_isNetworkError(e)) rethrow;
+      return _getCachedLiveList(cacheKey);
     }
-
-    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<List<dynamic>> getItems({
     required int businessId,
     required String type,
   }) async {
-    final token = await getToken();
-    final res = await http.get(
-      Uri.parse('$baseUrl/items?business_id=$businessId&type=$type'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
+    final cacheKey = 'items_b_${businessId}_t_$type';
+    try {
+      final token = await getToken();
+      final res = await http.get(
+        Uri.parse('$baseUrl/items?business_id=$businessId&type=$type'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
 
-    if (res.statusCode != 200) {
-      throw Exception('Fetch items failed: ${res.body}');
+      if (res.statusCode != 200) {
+        throw Exception('Fetch items failed: ${res.body}');
+      }
+
+      final decoded = jsonDecode(res.body);
+      await _cacheSet(cacheKey, decoded);
+      return _extractLiveList(decoded);
+    } catch (e) {
+      if (!_isNetworkError(e)) rethrow;
+      return _getCachedLiveList(cacheKey);
     }
-
-    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<Map<String, dynamic>> createItem({
@@ -624,30 +1086,66 @@ class Api {
     required int openingStock,
     required int lowStockAlert,
     String? photoPath,
+    bool queueOnFailure = true,
   }) async {
-    final token = await getToken();
-    final uri = Uri.parse('$baseUrl/items');
-    final req = http.MultipartRequest('POST', uri);
-    req.headers['Authorization'] = 'Bearer $token';
-    req.headers['Accept'] = 'application/json';
-    req.fields['business_id'] = businessId.toString();
-    req.fields['type'] = type;
-    req.fields['name'] = name;
-    req.fields['unit'] = unit;
-    req.fields['sale_price'] = salePrice.toString();
-    req.fields['purchase_price'] = purchasePrice.toString();
-    req.fields['tax_included'] = taxIncluded ? '1' : '0';
-    req.fields['opening_stock'] = openingStock.toString();
-    req.fields['low_stock_alert'] = lowStockAlert.toString();
-    if (photoPath != null) {
-      req.files.add(await http.MultipartFile.fromPath('photo', photoPath));
+    try {
+      final token = await getToken();
+      final uri = Uri.parse('$baseUrl/items');
+      final req = http.MultipartRequest('POST', uri);
+      req.headers['Authorization'] = 'Bearer $token';
+      req.headers['Accept'] = 'application/json';
+      req.fields['business_id'] = businessId.toString();
+      req.fields['type'] = type;
+      req.fields['name'] = name;
+      req.fields['unit'] = unit;
+      req.fields['sale_price'] = salePrice.toString();
+      req.fields['purchase_price'] = purchasePrice.toString();
+      req.fields['tax_included'] = taxIncluded ? '1' : '0';
+      req.fields['opening_stock'] = openingStock.toString();
+      req.fields['low_stock_alert'] = lowStockAlert.toString();
+      if (photoPath != null) {
+        req.files.add(await http.MultipartFile.fromPath('photo', photoPath));
+      }
+      final res = await req.send();
+      final body = await res.stream.bytesToString();
+      if (res.statusCode != 201) {
+        throw Exception('Create item failed: $body');
+      }
+      final created = jsonDecode(body) as Map<String, dynamic>;
+      await _prependCachedList('items_b_${businessId}_t_$type', created);
+      return created;
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'item.create',
+        payload: {
+          'businessId': businessId,
+          'type': type,
+          'name': name,
+          'unit': unit,
+          'salePrice': salePrice,
+          'purchasePrice': purchasePrice,
+          'taxIncluded': taxIncluded,
+          'openingStock': openingStock,
+          'lowStockAlert': lowStockAlert,
+          'photoPath': photoPath,
+        },
+      );
+      final local = {
+        'id': _tempOfflineId(),
+        'business_id': businessId,
+        'type': type,
+        'name': name,
+        'unit': unit,
+        'sale_price': salePrice,
+        'purchase_price': purchasePrice,
+        'current_stock': openingStock,
+        'low_stock_alert': lowStockAlert,
+        'offline_queued': true,
+      };
+      await _prependCachedList('items_b_${businessId}_t_$type', local);
+      return local;
     }
-    final res = await req.send();
-    final body = await res.stream.bytesToString();
-    if (res.statusCode != 201) {
-      throw Exception('Create item failed: $body');
-    }
-    return jsonDecode(body) as Map<String, dynamic>;
   }
 
   static Future<Map<String, dynamic>> updateItem({
@@ -660,47 +1158,75 @@ class Api {
     double? purchasePrice,
     int? lowStockAlert,
     String? photoPath,
+    bool queueOnFailure = true,
   }) async {
-    final token = await getToken();
-    debugPrint(
-        'PUT /items/$itemId name=$name unit=$unit sale=$salePrice purchase=$purchasePrice low=$lowStockAlert');
-    final uri = Uri.parse('$baseUrl/items/$itemId');
-    final req = http.MultipartRequest('POST', uri);
-    req.headers['Authorization'] = 'Bearer $token';
-    req.headers['Accept'] = 'application/json';
-    req.fields['_method'] = 'PUT';
-    if (name != null) {
-      req.fields['name'] = name;
-    }
-    if (unit != null) {
-      req.fields['unit'] = unit;
-    }
-    if (taxIncluded != null) {
-      req.fields['tax_included'] = taxIncluded ? '1' : '0';
-    }
-    if (currentStock != null) {
-      req.fields['current_stock'] = currentStock.toString();
-    }
-    if (salePrice != null) {
-      req.fields['sale_price'] = salePrice.toString();
-    }
-    if (purchasePrice != null) {
-      req.fields['purchase_price'] = purchasePrice.toString();
-    }
-    if (lowStockAlert != null) {
-      req.fields['low_stock_alert'] = lowStockAlert.toString();
-    }
-    if (photoPath != null && !photoPath.startsWith('http')) {
-      req.files.add(await http.MultipartFile.fromPath('photo', photoPath));
-    }
-    final res = await req.send();
-    final body = await res.stream.bytesToString();
-    if (res.statusCode != 200) {
+    try {
+      final token = await getToken();
+      debugPrint(
+          'PUT /items/$itemId name=$name unit=$unit sale=$salePrice purchase=$purchasePrice low=$lowStockAlert');
+      final uri = Uri.parse('$baseUrl/items/$itemId');
+      final req = http.MultipartRequest('POST', uri);
+      req.headers['Authorization'] = 'Bearer $token';
+      req.headers['Accept'] = 'application/json';
+      req.fields['_method'] = 'PUT';
+      if (name != null) {
+        req.fields['name'] = name;
+      }
+      if (unit != null) {
+        req.fields['unit'] = unit;
+      }
+      if (taxIncluded != null) {
+        req.fields['tax_included'] = taxIncluded ? '1' : '0';
+      }
+      if (currentStock != null) {
+        req.fields['current_stock'] = currentStock.toString();
+      }
+      if (salePrice != null) {
+        req.fields['sale_price'] = salePrice.toString();
+      }
+      if (purchasePrice != null) {
+        req.fields['purchase_price'] = purchasePrice.toString();
+      }
+      if (lowStockAlert != null) {
+        req.fields['low_stock_alert'] = lowStockAlert.toString();
+      }
+      if (photoPath != null && !photoPath.startsWith('http')) {
+        req.files.add(await http.MultipartFile.fromPath('photo', photoPath));
+      }
+      final res = await req.send();
+      final body = await res.stream.bytesToString();
+      if (res.statusCode != 200) {
+        debugPrint('Update item response: ${res.statusCode} $body');
+        throw Exception('Update item failed: $body');
+      }
       debugPrint('Update item response: ${res.statusCode} $body');
-      throw Exception('Update item failed: $body');
+      return jsonDecode(body) as Map<String, dynamic>;
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'item.update',
+        payload: {
+          'itemId': itemId,
+          'name': name,
+          'unit': unit,
+          'taxIncluded': taxIncluded,
+          'currentStock': currentStock,
+          'salePrice': salePrice,
+          'purchasePrice': purchasePrice,
+          'lowStockAlert': lowStockAlert,
+          'photoPath': photoPath,
+        },
+      );
+      return {
+        'id': itemId,
+        'name': name,
+        'unit': unit,
+        'sale_price': salePrice,
+        'purchase_price': purchasePrice,
+        'low_stock_alert': lowStockAlert,
+        'offline_queued': true,
+      };
     }
-    debugPrint('Update item response: ${res.statusCode} $body');
-    return jsonDecode(body) as Map<String, dynamic>;
   }
 
   static Future<Map<String, dynamic>> addItemStock({
@@ -712,35 +1238,60 @@ class Api {
     String? note,
     int? saleId,
     int? saleBillNumber,
+    bool queueOnFailure = true,
   }) async {
-    final token = await getToken();
-    debugPrint(
-        'POST /items/$itemId/stock type=$type qty=$quantity price=$price date=$date');
-    final res = await http.post(
-      Uri.parse('$baseUrl/items/$itemId/stock'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: jsonEncode({
+    try {
+      final token = await getToken();
+      debugPrint(
+          'POST /items/$itemId/stock type=$type qty=$quantity price=$price date=$date');
+      final res = await http.post(
+        Uri.parse('$baseUrl/items/$itemId/stock'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode({
+          'type': type,
+          'quantity': quantity,
+          'price': price,
+          'date': date,
+          'note': note,
+          'sale_id': saleId,
+          'sale_bill_number': saleBillNumber,
+        }),
+      );
+
+      if (res.statusCode != 200) {
+        debugPrint('Stock response: ${res.statusCode} ${res.body}');
+        throw Exception('Add stock failed: ${res.body}');
+      }
+
+      debugPrint('Stock response: ${res.statusCode} ${res.body}');
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'item.stock',
+        payload: {
+          'itemId': itemId,
+          'type': type,
+          'quantity': quantity,
+          'price': price,
+          'date': date,
+          'note': note,
+          'saleId': saleId,
+          'saleBillNumber': saleBillNumber,
+        },
+      );
+      return {
+        'item_id': itemId,
         'type': type,
         'quantity': quantity,
         'price': price,
-        'date': date,
-        'note': note,
-        'sale_id': saleId,
-        'sale_bill_number': saleBillNumber,
-      }),
-    );
-
-    if (res.statusCode != 200) {
-      debugPrint('Stock response: ${res.statusCode} ${res.body}');
-      throw Exception('Add stock failed: ${res.body}');
+        'offline_queued': true,
+      };
     }
-
-    debugPrint('Stock response: ${res.statusCode} ${res.body}');
-    return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
   static Future<List<dynamic>> getItemMovements({
@@ -768,19 +1319,27 @@ class Api {
   static Future<List<dynamic>> getSales({
     required int businessId,
   }) async {
-    final token = await getToken();
-    final res = await http.get(
-      Uri.parse('$baseUrl/sales?business_id=$businessId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
+    final cacheKey = 'sales_b_$businessId';
+    try {
+      final token = await getToken();
+      final res = await http.get(
+        Uri.parse('$baseUrl/sales?business_id=$businessId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
 
-    if (res.statusCode != 200) {
-      throw Exception('Fetch sales failed: ${res.body}');
+      if (res.statusCode != 200) {
+        throw Exception('Fetch sales failed: ${res.body}');
+      }
+      final decoded = jsonDecode(res.body);
+      await _cacheSet(cacheKey, decoded);
+      return _extractLiveList(decoded);
+    } catch (e) {
+      if (!_isNetworkError(e)) rethrow;
+      return _getCachedLiveList(cacheKey);
     }
-    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<Map<String, dynamic>> createSale({
@@ -802,69 +1361,122 @@ class Api {
     required double discountValue,
     required String discountType,
     String? discountLabel,
+    bool queueOnFailure = true,
   }) async {
-    final token = await getToken();
-    final req = http.MultipartRequest('POST', Uri.parse('$baseUrl/sales'));
-    req.headers['Authorization'] = 'Bearer $token';
-    req.headers['Accept'] = 'application/json';
-    req.fields['business_id'] = businessId.toString();
-    req.fields['bill_number'] = billNumber.toString();
-    req.fields['date'] = date;
-    req.fields['payment_mode'] = paymentMode;
-    req.fields['manual_amount'] = manualAmount.toString();
-    req.fields['line_items'] = jsonEncode(lineItems);
-    req.fields['additional_charges'] = jsonEncode(additionalCharges);
-    req.fields['discount_value'] = discountValue.toString();
-    req.fields['discount_type'] = discountType;
-    if (partyName != null && partyName.trim().isNotEmpty) {
-      req.fields['party_name'] = partyName.trim();
-    }
-    if (partyPhone != null && partyPhone.trim().isNotEmpty) {
-      req.fields['party_phone'] = partyPhone.trim();
-    }
-    if (customerId != null) {
-      req.fields['customer_id'] = customerId.toString();
-    }
-    if (dueDate != null && dueDate.isNotEmpty) {
-      req.fields['due_date'] = dueDate;
-    }
-    if (receivedAmount != null) {
-      req.fields['received_amount'] = receivedAmount.toString();
-    }
-    if (paymentReference != null && paymentReference.trim().isNotEmpty) {
-      req.fields['payment_reference'] = paymentReference.trim();
-    }
-    if (privateNotes != null && privateNotes.trim().isNotEmpty) {
-      req.fields['private_notes'] = privateNotes.trim();
-    }
-    if (discountLabel != null && discountLabel.trim().isNotEmpty) {
-      req.fields['discount_label'] = discountLabel.trim();
-    }
-    if (photoPaths != null) {
-      for (final path in photoPaths) {
-        if (path.trim().isEmpty) continue;
-        req.files.add(await http.MultipartFile.fromPath('note_photos[]', path));
+    try {
+      final token = await getToken();
+      final req = http.MultipartRequest('POST', Uri.parse('$baseUrl/sales'));
+      req.headers['Authorization'] = 'Bearer $token';
+      req.headers['Accept'] = 'application/json';
+      req.fields['business_id'] = businessId.toString();
+      req.fields['bill_number'] = billNumber.toString();
+      req.fields['date'] = date;
+      req.fields['payment_mode'] = paymentMode;
+      req.fields['manual_amount'] = manualAmount.toString();
+      req.fields['line_items'] = jsonEncode(lineItems);
+      req.fields['additional_charges'] = jsonEncode(additionalCharges);
+      req.fields['discount_value'] = discountValue.toString();
+      req.fields['discount_type'] = discountType;
+      if (partyName != null && partyName.trim().isNotEmpty) {
+        req.fields['party_name'] = partyName.trim();
       }
+      if (partyPhone != null && partyPhone.trim().isNotEmpty) {
+        req.fields['party_phone'] = partyPhone.trim();
+      }
+      if (customerId != null) {
+        req.fields['customer_id'] = customerId.toString();
+      }
+      if (dueDate != null && dueDate.isNotEmpty) {
+        req.fields['due_date'] = dueDate;
+      }
+      if (receivedAmount != null) {
+        req.fields['received_amount'] = receivedAmount.toString();
+      }
+      if (paymentReference != null && paymentReference.trim().isNotEmpty) {
+        req.fields['payment_reference'] = paymentReference.trim();
+      }
+      if (privateNotes != null && privateNotes.trim().isNotEmpty) {
+        req.fields['private_notes'] = privateNotes.trim();
+      }
+      if (discountLabel != null && discountLabel.trim().isNotEmpty) {
+        req.fields['discount_label'] = discountLabel.trim();
+      }
+      if (photoPaths != null) {
+        for (final path in photoPaths) {
+          if (path.trim().isEmpty) continue;
+          req.files
+              .add(await http.MultipartFile.fromPath('note_photos[]', path));
+        }
+      }
+      final res = await req.send();
+      final body = await res.stream.bytesToString();
+      if (res.statusCode != 201) {
+        throw Exception('Create sale failed: $body');
+      }
+      final created = jsonDecode(body) as Map<String, dynamic>;
+      await _prependCachedList('sales_b_$businessId', created);
+      return created;
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'sale.create',
+        payload: {
+          'businessId': businessId,
+          'billNumber': billNumber,
+          'date': date,
+          'partyName': partyName,
+          'partyPhone': partyPhone,
+          'customerId': customerId,
+          'paymentMode': paymentMode,
+          'dueDate': dueDate,
+          'receivedAmount': receivedAmount,
+          'paymentReference': paymentReference,
+          'privateNotes': privateNotes,
+          'photoPaths': photoPaths ?? const <String>[],
+          'manualAmount': manualAmount,
+          'lineItems': lineItems,
+          'additionalCharges': additionalCharges,
+          'discountValue': discountValue,
+          'discountType': discountType,
+          'discountLabel': discountLabel,
+        },
+      );
+      final local = {
+        'id': _tempOfflineId(),
+        'business_id': businessId,
+        'bill_number': billNumber,
+        'date': date,
+        'payment_mode': paymentMode,
+        'amount': manualAmount,
+        'offline_queued': true,
+      };
+      await _prependCachedList('sales_b_$businessId', local);
+      return local;
     }
-    final res = await req.send();
-    final body = await res.stream.bytesToString();
-    if (res.statusCode != 201) {
-      throw Exception('Create sale failed: $body');
-    }
-    return jsonDecode(body) as Map<String, dynamic>;
   }
 
-  static Future<void> deleteSale(int saleId) async {
-    final token = await getToken();
-    final res = await http.delete(
-      Uri.parse('$baseUrl/sales/$saleId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
-    if (res.statusCode != 200) {
-      throw Exception('Delete sale failed: ${res.body}');
+  static Future<void> deleteSale(
+    int saleId, {
+    bool queueOnFailure = true,
+  }) async {
+    try {
+      final token = await getToken();
+      final res = await http.delete(
+        Uri.parse('$baseUrl/sales/$saleId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
+      if (res.statusCode != 200) {
+        throw Exception('Delete sale failed: ${res.body}');
+      }
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'sale.delete',
+        payload: {'saleId': saleId},
+      );
     }
   }
 
@@ -972,20 +1584,28 @@ class Api {
   static Future<List<dynamic>> getPurchases({
     required int businessId,
   }) async {
-    final token = await getToken();
-    final res = await http.get(
-      Uri.parse('$baseUrl/purchases?business_id=$businessId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
+    final cacheKey = 'purchases_b_$businessId';
+    try {
+      final token = await getToken();
+      final res = await http.get(
+        Uri.parse('$baseUrl/purchases?business_id=$businessId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
 
-    if (res.statusCode != 200) {
-      throw Exception('Fetch purchases failed: ${res.body}');
+      if (res.statusCode != 200) {
+        throw Exception('Fetch purchases failed: ${res.body}');
+      }
+
+      final decoded = jsonDecode(res.body);
+      await _cacheSet(cacheKey, decoded);
+      return _extractLiveList(decoded);
+    } catch (e) {
+      if (!_isNetworkError(e)) rethrow;
+      return _getCachedLiveList(cacheKey);
     }
-
-    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<Map<String, dynamic>> createPurchase({
@@ -1007,69 +1627,123 @@ class Api {
     required double discountValue,
     required String discountType,
     String? discountLabel,
+    bool queueOnFailure = true,
   }) async {
-    final token = await getToken();
-    final req = http.MultipartRequest('POST', Uri.parse('$baseUrl/purchases'));
-    req.headers['Authorization'] = 'Bearer $token';
-    req.headers['Accept'] = 'application/json';
-    req.fields['business_id'] = businessId.toString();
-    req.fields['purchase_number'] = purchaseNumber.toString();
-    req.fields['date'] = date;
-    req.fields['payment_mode'] = paymentMode;
-    req.fields['manual_amount'] = manualAmount.toString();
-    req.fields['line_items'] = jsonEncode(lineItems);
-    req.fields['additional_charges'] = jsonEncode(additionalCharges);
-    req.fields['discount_value'] = discountValue.toString();
-    req.fields['discount_type'] = discountType;
-    if (partyName != null && partyName.trim().isNotEmpty) {
-      req.fields['party_name'] = partyName.trim();
-    }
-    if (partyPhone != null && partyPhone.trim().isNotEmpty) {
-      req.fields['party_phone'] = partyPhone.trim();
-    }
-    if (supplierId != null) {
-      req.fields['supplier_id'] = supplierId.toString();
-    }
-    if (dueDate != null && dueDate.isNotEmpty) {
-      req.fields['due_date'] = dueDate;
-    }
-    if (paidAmount != null) {
-      req.fields['paid_amount'] = paidAmount.toString();
-    }
-    if (paymentReference != null && paymentReference.trim().isNotEmpty) {
-      req.fields['payment_reference'] = paymentReference.trim();
-    }
-    if (privateNotes != null && privateNotes.trim().isNotEmpty) {
-      req.fields['private_notes'] = privateNotes.trim();
-    }
-    if (discountLabel != null && discountLabel.trim().isNotEmpty) {
-      req.fields['discount_label'] = discountLabel.trim();
-    }
-    if (photoPaths != null) {
-      for (final path in photoPaths) {
-        if (path.trim().isEmpty) continue;
-        req.files.add(await http.MultipartFile.fromPath('note_photos[]', path));
+    try {
+      final token = await getToken();
+      final req =
+          http.MultipartRequest('POST', Uri.parse('$baseUrl/purchases'));
+      req.headers['Authorization'] = 'Bearer $token';
+      req.headers['Accept'] = 'application/json';
+      req.fields['business_id'] = businessId.toString();
+      req.fields['purchase_number'] = purchaseNumber.toString();
+      req.fields['date'] = date;
+      req.fields['payment_mode'] = paymentMode;
+      req.fields['manual_amount'] = manualAmount.toString();
+      req.fields['line_items'] = jsonEncode(lineItems);
+      req.fields['additional_charges'] = jsonEncode(additionalCharges);
+      req.fields['discount_value'] = discountValue.toString();
+      req.fields['discount_type'] = discountType;
+      if (partyName != null && partyName.trim().isNotEmpty) {
+        req.fields['party_name'] = partyName.trim();
       }
+      if (partyPhone != null && partyPhone.trim().isNotEmpty) {
+        req.fields['party_phone'] = partyPhone.trim();
+      }
+      if (supplierId != null) {
+        req.fields['supplier_id'] = supplierId.toString();
+      }
+      if (dueDate != null && dueDate.isNotEmpty) {
+        req.fields['due_date'] = dueDate;
+      }
+      if (paidAmount != null) {
+        req.fields['paid_amount'] = paidAmount.toString();
+      }
+      if (paymentReference != null && paymentReference.trim().isNotEmpty) {
+        req.fields['payment_reference'] = paymentReference.trim();
+      }
+      if (privateNotes != null && privateNotes.trim().isNotEmpty) {
+        req.fields['private_notes'] = privateNotes.trim();
+      }
+      if (discountLabel != null && discountLabel.trim().isNotEmpty) {
+        req.fields['discount_label'] = discountLabel.trim();
+      }
+      if (photoPaths != null) {
+        for (final path in photoPaths) {
+          if (path.trim().isEmpty) continue;
+          req.files
+              .add(await http.MultipartFile.fromPath('note_photos[]', path));
+        }
+      }
+      final res = await req.send();
+      final body = await res.stream.bytesToString();
+      if (res.statusCode != 201) {
+        throw Exception('Create purchase failed: $body');
+      }
+      final created = jsonDecode(body) as Map<String, dynamic>;
+      await _prependCachedList('purchases_b_$businessId', created);
+      return created;
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'purchase.create',
+        payload: {
+          'businessId': businessId,
+          'purchaseNumber': purchaseNumber,
+          'date': date,
+          'partyName': partyName,
+          'partyPhone': partyPhone,
+          'supplierId': supplierId,
+          'paymentMode': paymentMode,
+          'dueDate': dueDate,
+          'paidAmount': paidAmount,
+          'paymentReference': paymentReference,
+          'privateNotes': privateNotes,
+          'photoPaths': photoPaths ?? const <String>[],
+          'manualAmount': manualAmount,
+          'lineItems': lineItems,
+          'additionalCharges': additionalCharges,
+          'discountValue': discountValue,
+          'discountType': discountType,
+          'discountLabel': discountLabel,
+        },
+      );
+      final local = {
+        'id': _tempOfflineId(),
+        'business_id': businessId,
+        'purchase_number': purchaseNumber,
+        'date': date,
+        'payment_mode': paymentMode,
+        'amount': manualAmount,
+        'offline_queued': true,
+      };
+      await _prependCachedList('purchases_b_$businessId', local);
+      return local;
     }
-    final res = await req.send();
-    final body = await res.stream.bytesToString();
-    if (res.statusCode != 201) {
-      throw Exception('Create purchase failed: $body');
-    }
-    return jsonDecode(body) as Map<String, dynamic>;
   }
 
-  static Future<void> deletePurchase(int purchaseId) async {
-    final token = await getToken();
-    final res = await http.delete(
-      Uri.parse('$baseUrl/purchases/$purchaseId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
-    if (res.statusCode != 200) {
-      throw Exception('Delete purchase failed: ${res.body}');
+  static Future<void> deletePurchase(
+    int purchaseId, {
+    bool queueOnFailure = true,
+  }) async {
+    try {
+      final token = await getToken();
+      final res = await http.delete(
+        Uri.parse('$baseUrl/purchases/$purchaseId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
+      if (res.statusCode != 200) {
+        throw Exception('Delete purchase failed: ${res.body}');
+      }
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'purchase.delete',
+        payload: {'purchaseId': purchaseId},
+      );
     }
   }
 
@@ -1177,18 +1851,26 @@ class Api {
   static Future<List<dynamic>> getExpenseCategories({
     required int businessId,
   }) async {
-    final token = await getToken();
-    final res = await http.get(
-      Uri.parse('$baseUrl/expense-categories?business_id=$businessId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
-    if (res.statusCode != 200) {
-      throw Exception('Fetch expense categories failed: ${res.body}');
+    final cacheKey = 'expense_categories_b_$businessId';
+    try {
+      final token = await getToken();
+      final res = await http.get(
+        Uri.parse('$baseUrl/expense-categories?business_id=$businessId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
+      if (res.statusCode != 200) {
+        throw Exception('Fetch expense categories failed: ${res.body}');
+      }
+      final decoded = jsonDecode(res.body);
+      await _cacheSet(cacheKey, decoded);
+      return _extractLiveList(decoded);
+    } catch (e) {
+      if (!_isNetworkError(e)) rethrow;
+      return _getCachedLiveList(cacheKey);
     }
-    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<Map<String, dynamic>> createExpenseCategory({
@@ -1217,18 +1899,26 @@ class Api {
   static Future<List<dynamic>> getExpenses({
     required int businessId,
   }) async {
-    final token = await getToken();
-    final res = await http.get(
-      Uri.parse('$baseUrl/expenses?business_id=$businessId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
-    if (res.statusCode != 200) {
-      throw Exception('Fetch expenses failed: ${res.body}');
+    final cacheKey = 'expenses_b_$businessId';
+    try {
+      final token = await getToken();
+      final res = await http.get(
+        Uri.parse('$baseUrl/expenses?business_id=$businessId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
+      if (res.statusCode != 200) {
+        throw Exception('Fetch expenses failed: ${res.body}');
+      }
+      final decoded = jsonDecode(res.body);
+      await _cacheSet(cacheKey, decoded);
+      return _extractLiveList(decoded);
+    } catch (e) {
+      if (!_isNetworkError(e)) rethrow;
+      return _getCachedLiveList(cacheKey);
     }
-    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<Map<String, dynamic>> createExpense({
@@ -1240,47 +1930,85 @@ class Api {
     required double manualAmount,
     bool applyTax = false,
     required List<Map<String, dynamic>> items,
+    bool queueOnFailure = true,
   }) async {
-    final token = await getToken();
-    final res = await http.post(
-      Uri.parse('$baseUrl/expenses'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: jsonEncode({
+    try {
+      final token = await getToken();
+      final res = await http.post(
+        Uri.parse('$baseUrl/expenses'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode({
+          'business_id': businessId,
+          'expense_number': expenseNumber,
+          'date': date,
+          'category_id': categoryId,
+          'category_name': categoryName,
+          'manual_amount': manualAmount,
+          'apply_tax': applyTax,
+          'items': items,
+        }),
+      );
+      if (res.statusCode != 201) {
+        throw Exception('Create expense failed: ${res.body}');
+      }
+      final created = jsonDecode(res.body) as Map<String, dynamic>;
+      await _prependCachedList('expenses_b_$businessId', created);
+      return created;
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'expense.create',
+        payload: {
+          'businessId': businessId,
+          'expenseNumber': expenseNumber,
+          'date': date,
+          'categoryId': categoryId,
+          'categoryName': categoryName,
+          'manualAmount': manualAmount,
+          'applyTax': applyTax,
+          'items': items,
+        },
+      );
+      final local = {
+        'id': _tempOfflineId(),
         'business_id': businessId,
         'expense_number': expenseNumber,
         'date': date,
-        'category_id': categoryId,
-        'category_name': categoryName,
-        'manual_amount': manualAmount,
-        'apply_tax': applyTax,
-        'items': items,
-      }),
-    );
-    if (res.statusCode != 201) {
-      throw Exception('Create expense failed: ${res.body}');
+        'amount': manualAmount,
+        'offline_queued': true,
+      };
+      await _prependCachedList('expenses_b_$businessId', local);
+      return local;
     }
-    return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
   static Future<List<dynamic>> getExpenseItems({
     required int businessId,
   }) async {
-    final token = await getToken();
-    final res = await http.get(
-      Uri.parse('$baseUrl/expense-items?business_id=$businessId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
-    if (res.statusCode != 200) {
-      throw Exception('Fetch expense items failed: ${res.body}');
+    final cacheKey = 'expense_items_b_$businessId';
+    try {
+      final token = await getToken();
+      final res = await http.get(
+        Uri.parse('$baseUrl/expense-items?business_id=$businessId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
+      if (res.statusCode != 200) {
+        throw Exception('Fetch expense items failed: ${res.body}');
+      }
+      final decoded = jsonDecode(res.body);
+      await _cacheSet(cacheKey, decoded);
+      return _extractLiveList(decoded);
+    } catch (e) {
+      if (!_isNetworkError(e)) rethrow;
+      return _getCachedLiveList(cacheKey);
     }
-    return _extractLiveList(jsonDecode(res.body));
   }
 
   static Future<Map<String, dynamic>> createExpenseItem({
@@ -1416,17 +2144,25 @@ class Api {
   static Future<Map<String, dynamic>> getCashbook({
     required int businessId,
   }) async {
-    final token = await getToken();
-    final res = await http.get(
-      Uri.parse('$baseUrl/cashbook?business_id=$businessId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
-    if (res.statusCode != 200) {
-      throw Exception('Fetch cashbook failed: ${res.body}');
+    final cacheKey = 'cashbook_b_$businessId';
+    try {
+      final token = await getToken();
+      final res = await http.get(
+        Uri.parse('$baseUrl/cashbook?business_id=$businessId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
+      if (res.statusCode != 200) {
+        throw Exception('Fetch cashbook failed: ${res.body}');
+      }
+      final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+      await _cacheSet(cacheKey, decoded);
+      return decoded;
+    } catch (e) {
+      if (!_isNetworkError(e)) rethrow;
+      return _getCachedMap(cacheKey);
     }
-    return jsonDecode(res.body) as Map<String, dynamic>;
   }
 }
