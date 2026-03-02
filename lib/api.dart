@@ -24,7 +24,33 @@ class Api {
       final host = uri.host.toLowerCase();
       final isLocalHost =
           host == 'localhost' || host == '127.0.0.1' || host == '10.0.2.2';
-      if (!isLocalHost) return raw;
+      if (!isLocalHost) {
+        // Normalize accidental duplicated storage segments from legacy values.
+        var fixedPath = uri.path
+            .replaceAll('/public/storage/app/public/', '/storage/app/public/')
+            .replaceAll('/public/storage/', '/storage/app/public/');
+        if (fixedPath != uri.path) {
+          return Uri(
+            scheme: uri.scheme,
+            host: uri.host,
+            port: uri.hasPort ? uri.port : null,
+            path: fixedPath,
+          ).toString();
+        }
+        // Shared-host compatibility:
+        // convert /financeserver/public/storage/* to /financeserver/storage/app/public/*.
+        if (uri.path.contains('/financeserver/public/storage/')) {
+          final fixedPath = uri.path.replaceFirst(
+              '/financeserver/public/storage/', '/financeserver/storage/app/public/');
+          return Uri(
+            scheme: uri.scheme,
+            host: uri.host,
+            port: uri.hasPort ? uri.port : null,
+            path: fixedPath,
+          ).toString();
+        }
+        return raw;
+      }
 
       final path = uri.path;
       const appPrefix = '/financeserver/public';
@@ -45,6 +71,9 @@ class Api {
     }
     if (raw.startsWith('public/')) {
       raw = raw.substring('public/'.length);
+    }
+    if (raw.startsWith('app/public/')) {
+      raw = raw.substring('app/public/'.length);
     }
     if (raw.startsWith('storage/app/public/')) {
       raw = raw.substring('storage/app/public/'.length);

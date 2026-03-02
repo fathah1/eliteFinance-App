@@ -367,7 +367,7 @@ class _SupplierTransactionsReportScreenState
   Future<void> _openEntry(_TxRow row) async {
     final attachment = (row.raw['attachment_path'] ?? '').toString();
     final attachmentUrl = attachment.isNotEmpty
-        ? 'https://eliteposs.com/financeserver/public/storage/$attachment'
+        ? (Api.resolveMediaUrl(attachment) ?? '')
         : '';
     await Navigator.push(
       context,
@@ -377,6 +377,11 @@ class _SupplierTransactionsReportScreenState
           entry: row.raw,
           runningBalance: row.runningBalance,
           attachmentUrl: attachmentUrl,
+          partyImageUrl: Api.resolveMediaUrl(
+            row.raw['supplier_photo_url'] ??
+                row.raw['photo_url'] ??
+                row.raw['image_url'],
+          ),
           onEdit: () {
             Navigator.pop(context);
             Navigator.push(

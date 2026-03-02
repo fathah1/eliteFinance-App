@@ -6,7 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 import 'package:screenshot/screenshot.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -496,6 +499,221 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
     final uri = Uri.parse('sms:$number?body=$message');
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri);
+    }
+  }
+
+  String _reportPeriodLabel() {
+    if (_transactions.isEmpty) return DateFormat('dd MMM yyyy').format(DateTime.now());
+    final dates = _transactions
+        .map((t) => DateTime.tryParse((t['created_at'] ?? '').toString()))
+        .whereType<DateTime>()
+        .toList();
+    if (dates.isEmpty) return DateFormat('dd MMM yyyy').format(DateTime.now());
+    dates.sort((a, b) => a.compareTo(b));
+    final start = DateFormat('dd MMM yyyy').format(dates.first);
+    final end = DateFormat('dd MMM yyyy').format(dates.last);
+    return '$start - $end';
+  }
+
+  String _sanitizePhoneForWhatsApp(String raw) {
+    final keepPlus = raw.trim().startsWith('+');
+    final digits = raw.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.isEmpty) return '';
+    return keepPlus ? '+$digits' : digits;
+  }
+
+  Future<File> _buildCustomerReportPdf() async {
+    final customerName = (widget.customer['name'] ?? 'Customer').toString();
+    final customerPhone = (widget.customer['phone'] ?? '').toString();
+    final now = DateTime.now();
+    final entriesAsc = _transactions.reversed.toList();
+    final totalCredit = entriesAsc
+        .where((t) => (t['type'] ?? '').toString().toUpperCase() == 'CREDIT')
+        .fold<double>(0, (sum, t) => sum + _asDouble(t['amount']));
+    final totalDebit = entriesAsc
+        .where((t) => (t['type'] ?? '').toString().toUpperCase() == 'DEBIT')
+        .fold<double>(0, (sum, t) => sum + _asDouble(t['amount']));
+    final net = totalCredit - totalDebit;
+
+    final pdf = pw.Document();
+    pdf.addPage(
+      pw.MultiPage(
+        pageTheme: const pw.PageTheme(
+          margin: pw.EdgeInsets.all(24),
+        ),
+        build: (context) => [
+          pw.Text(
+            'Customer Report',
+            style: pw.TextStyle(
+              fontSize: 20,
+              fontWeight: pw.FontWeight.bold,
+              color: PdfColors.blue900,
+            ),
+          ),
+          pw.SizedBox(height: 10),
+          pw.Text('Customer: $customerName'),
+          if (customerPhone.trim().isNotEmpty) pw.Text('Phone: $customerPhone'),
+          pw.Text('Period: ${_reportPeriodLabel()}'),
+          pw.Text('Generated: ${DateFormat('dd MMM yyyy hh:mm a').format(now)}'),
+          pw.SizedBox(height: 14),
+          pw.Container(
+            padding: const pw.EdgeInsets.all(10),
+            decoration: pw.BoxDecoration(
+              border: pw.Border.all(color: PdfColors.grey300),
+              borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+            ),
+            child: pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text('You gave: AED ${totalCredit.toStringAsFixed(0)}'),
+                pw.Text('You got: AED ${totalDebit.toStringAsFixed(0)}'),
+                pw.Text(
+                  'Net: AED ${net.abs().toStringAsFixed(0)}',
+                  style: pw.TextStyle(
+                    fontWeight: pw.FontWeight.bold,
+                    color: net >= 0 ? PdfColors.red700 : PdfColors.green700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          pw.SizedBox(height: 10),
+          pw.Table.fromTextArray(
+            headerStyle: pw.TextStyle(
+              fontWeight: pw.FontWeight.bold,
+              color: PdfColors.black,
+            ),
+            headerDecoration: const pw.BoxDecoration(color: PdfColors.grey200),
+            cellAlignment: pw.Alignment.centerLeft,
+            headerAlignment: pw.Alignment.centerLeft,
+            columnWidths: {
+              0: const pw.FlexColumnWidth(1.3),
+              1: const pw.FlexColumnWidth(1.7),
+              2: const pw.FlexColumnWidth(1.1),
+              3: const pw.FlexColumnWidth(1.2),
+              4: const pw.FlexColumnWidth(1.2),
+            },
+            headers: const ['Date', 'Note', 'Type', 'Amount', 'Balance'],
+            data: entriesAsc.map((t) {
+              final type = (t['type'] ?? '').toString().toUpperCase();
+              final date = DateTime.tryParse((t['created_at'] ?? '').toString());
+              final dateLabel =
+                  date == null ? '-' : DateFormat('dd MMM yy, hh:mm a').format(date);
+              return [
+                dateLabel,
+                (t['note'] ?? '').toString(),
+                type == 'CREDIT' ? 'You gave' : 'You got',
+                'AED ${_asDouble(t['amount']).toStringAsFixed(0)}',
+                'AED ${_asDouble(t['running_balance']).toStringAsFixed(0)}',
+              ];
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+
+    final dir = await getApplicationDocumentsDirectory();
+    final file = File(
+      '${dir.path}/customer_report_${widget.customer['id']}_${DateTime.now().millisecondsSinceEpoch}.pdf',
+    );
+    await file.writeAsBytes(await pdf.save(), flush: true);
+    return file;
+  }
+
+  Future<void> _downloadCustomerReportPdf() async {
+    try {
+      final file = await _buildCustomerReportPdf();
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Report saved'),
+          content: Text(
+            'Saved to:\n${file.path}\n\n'
+            'To open it:\n'
+            '1. Open Files/My Files app\n'
+            '2. Go to Android/data/com.example.app/files\n'
+            '3. Open the PDF file',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                await OpenFilex.open(file.path);
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+              child: const Text('Open PDF'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to generate report: $e')),
+      );
+    }
+  }
+
+  Future<void> _sendReportOnWhatsApp() async {
+    try {
+      final file = await _buildCustomerReportPdf();
+      final number = _sanitizePhoneForWhatsApp(
+        (widget.customer['phone'] ?? '').toString(),
+      );
+      if (!mounted) return;
+      if (number.isEmpty) {
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('No number'),
+            content: Text(
+              "Customer doesn't have number. Report has been downloaded.\n\n"
+              'Saved to:\n${file.path}\n\n'
+              'To open it:\n'
+              '1. Open Files/My Files app\n'
+              '2. Go to Android/data/com.example.app/files\n'
+              '3. Open the PDF file',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () async {
+                  await OpenFilex.open(file.path);
+                  if (ctx.mounted) Navigator.pop(ctx);
+                },
+                child: const Text('Open PDF'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
+
+      final customerName = (widget.customer['name'] ?? 'Customer').toString();
+      final message = Uri.encodeComponent(
+        'Hi $customerName, please find your account report. '
+        'Net balance: AED ${_balance.abs().toStringAsFixed(0)}.',
+      );
+      final waUri = Uri.parse('https://wa.me/$number?text=$message');
+      if (await canLaunchUrl(waUri)) {
+        await launchUrl(waUri, mode: LaunchMode.externalApplication);
+      }
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: 'Customer report - $customerName',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to share report: $e')),
+      );
     }
   }
 
@@ -1124,7 +1342,11 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                const _QuickAction(icon: Icons.picture_as_pdf, label: 'Report'),
+                _QuickAction(
+                  icon: Icons.picture_as_pdf,
+                  label: 'Report',
+                  onTap: _downloadCustomerReportPdf,
+                ),
                 _QuickAction(
                   icon: Icons.edit,
                   label: 'Edit',
@@ -1137,9 +1359,9 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                     onTap: () => _shareOnWhatsApp(_balance),
                   ),
                 _QuickAction(
-                  icon: Icons.sms,
-                  label: 'SMS',
-                  onTap: () => _sendSms(_balance),
+                  icon: FontAwesomeIcons.whatsapp,
+                  label: 'WhatsApp',
+                  onTap: _sendReportOnWhatsApp,
                 ),
               ],
             ),
@@ -1162,7 +1384,7 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                               final attachment =
                                   (t['attachment_path'] ?? '').toString();
                               final attachmentUrl = attachment.isNotEmpty
-                                  ? 'https://eliteposs.com/financeserver/public/storage/$attachment'
+                                  ? (Api.resolveMediaUrl(attachment) ?? '')
                                   : '';
                               Navigator.push(
                                 context,
@@ -1172,6 +1394,14 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                                     entry: t,
                                     runningBalance: running,
                                     attachmentUrl: attachmentUrl,
+                                    partyImageUrl: Api.resolveMediaUrl(
+                                      widget.customer['photo_url'] ??
+                                          widget.customer['photoPath'] ??
+                                          widget.customer['photo_path'] ??
+                                          widget.customer['photo'] ??
+                                          widget.customer['image_url'] ??
+                                          widget.customer['avatar_url'],
+                                    ),
                                     onEdit: () {
                                       Navigator.pop(context);
                                       Navigator.push(

@@ -1151,7 +1151,7 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
                               final attachment =
                                   (t['attachment_path'] ?? '').toString();
                               final attachmentUrl = attachment.isNotEmpty
-                                  ? 'https://eliteposs.com/financeserver/public/storage/$attachment'
+                                  ? (Api.resolveMediaUrl(attachment) ?? '')
                                   : '';
                               Navigator.push(
                                 context,
@@ -1161,6 +1161,14 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
                                     entry: t,
                                     runningBalance: running,
                                     attachmentUrl: attachmentUrl,
+                                    partyImageUrl: Api.resolveMediaUrl(
+                                      widget.supplier['photo_url'] ??
+                                          widget.supplier['photoPath'] ??
+                                          widget.supplier['photo_path'] ??
+                                          widget.supplier['photo'] ??
+                                          widget.supplier['image_url'] ??
+                                          widget.supplier['avatar_url'],
+                                    ),
                                     onEdit: () {
                                       Navigator.pop(context);
                                       Navigator.push(
