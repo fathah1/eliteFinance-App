@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -11,8 +12,9 @@ class Api {
       'https://eliteposs.com/financeserver/public';
   static const String _publicOrigin = 'https://eliteposs.com';
   static const String _sharedHostMediaBase =
-      'https://eliteposs.com/financeserver/storage/app/public';
+      'https://eliteposs.com/financeserver/public/storage';
   static const String baseUrl = '$publicBaseUrl/api';
+  static const String _offlineCredsKey = 'offline_login_credentials_v1';
 
   static String? resolveMediaUrl(dynamic rawValue) {
     if (rawValue == null) return null;
@@ -27,8 +29,8 @@ class Api {
       if (!isLocalHost) {
         // Normalize accidental duplicated storage segments from legacy values.
         var fixedPath = uri.path
-            .replaceAll('/public/storage/app/public/', '/storage/app/public/')
-            .replaceAll('/public/storage/', '/storage/app/public/');
+            .replaceAll('/public/storage/app/public/', '/public/storage/')
+            .replaceAll('/storage/app/public/', '/public/storage/');
         if (fixedPath != uri.path) {
           return Uri(
             scheme: uri.scheme,
@@ -38,10 +40,12 @@ class Api {
           ).toString();
         }
         // Shared-host compatibility:
-        // convert /financeserver/public/storage/* to /financeserver/storage/app/public/*.
-        if (uri.path.contains('/financeserver/public/storage/')) {
+        // some old records contain /financeserver/storage/<path>
+        // but files are actually under /financeserver/storage/app/public/<path>.
+        if (uri.path.contains('/financeserver/storage/') &&
+            !uri.path.contains('/storage/app/public/')) {
           final fixedPath = uri.path.replaceFirst(
-              '/financeserver/public/storage/', '/financeserver/storage/app/public/');
+              '/financeserver/storage/', '/financeserver/storage/app/public/');
           return Uri(
             scheme: uri.scheme,
             host: uri.host,
@@ -133,6 +137,25 @@ class Api {
     return _extractLiveList(cached);
   }
 
+  static Future<Map<String, dynamic>?> findCachedCustomerByAnyId({
+    required int businessId,
+    required int anyId,
+  }) async {
+    final rows = await _getCachedLiveList('customers_b_$businessId');
+    for (final r in rows) {
+      if (r is! Map) continue;
+      final m = Map<String, dynamic>.from(r);
+      final id = m['id'] is num
+          ? (m['id'] as num).toInt()
+          : int.tryParse((m['id'] ?? '').toString());
+      final sid = m['server_id'] is num
+          ? (m['server_id'] as num).toInt()
+          : int.tryParse((m['server_id'] ?? '').toString());
+      if (id == anyId || sid == anyId) return m;
+    }
+    return null;
+  }
+
   static Future<Map<String, dynamic>> _getCachedMap(String key) async {
     final cached = await _cacheGet(key);
     if (cached is Map<String, dynamic>) return cached;
@@ -144,6 +167,20 @@ class Api {
       String key, Map<String, dynamic> row) async {
     final current = await _getCachedLiveList(key);
     final next = <dynamic>[row, ...current];
+    await _cacheSet(key, next);
+  }
+
+  static Future<void> _removeFromCachedListById(String key, int id) async {
+    final current = await _getCachedLiveList(key);
+    final next = current.where((e) {
+      if (e is Map) {
+        final rid = (e['id'] is num)
+            ? (e['id'] as num).toInt()
+            : int.tryParse((e['id'] ?? '').toString());
+        return rid != id;
+      }
+      return true;
+    }).toList();
     await _cacheSet(key, next);
   }
 
@@ -179,6 +216,88 @@ class Api {
     await prefs.remove('current_user');
   }
 
+  static Future<void> saveOfflineLoginCredential({
+    required String username,
+    required Map<String, dynamic> user,
+    String? password,
+    String? verifier,
+    String? salt,
+    int version = 1,
+  }) async {
+    final key = username.trim().toLowerCase();
+    if (key.isEmpty) return;
+    final normalizedSalt = (salt ?? '').trim();
+    final resolvedVerifier = (verifier ?? '').trim().isNotEmpty
+        ? verifier!.trim()
+        : ((password != null && normalizedSalt.isNotEmpty)
+            ? computeOfflineAuthVerifier(
+                username: username,
+                password: password,
+                salt: normalizedSalt,
+              )
+            : null);
+    final prefs = await SharedPreferences.getInstance();
+    Map<String, dynamic> all = {};
+    final raw = prefs.getString(_offlineCredsKey);
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        all = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      } catch (_) {}
+    }
+    all[key] = {
+      'username': username.trim(),
+      'password': password,
+      'verifier': resolvedVerifier,
+      'salt': normalizedSalt.isEmpty ? null : normalizedSalt,
+      'version': version,
+      'saved_at': DateTime.now().toIso8601String(),
+      'user': user,
+    };
+    await prefs.setString(_offlineCredsKey, jsonEncode(all));
+  }
+
+  static String computeOfflineAuthVerifier({
+    required String username,
+    required String password,
+    required String salt,
+  }) {
+    final normalizedUsername = username.trim().toLowerCase();
+    final payload = 'ecbooks_v1|$normalizedUsername|$password|$salt';
+    return sha256.convert(utf8.encode(payload)).toString();
+  }
+
+  static Future<Map<String, dynamic>?> getOfflineLoginCredential(
+      String username) async {
+    final key = username.trim().toLowerCase();
+    if (key.isEmpty) return null;
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_offlineCredsKey);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final all = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      final item = all[key];
+      if (item is Map<String, dynamic>) return item;
+      if (item is Map) return Map<String, dynamic>.from(item);
+    } catch (_) {}
+    return null;
+  }
+
+  static Future<bool> trySilentOnlineReloginFromOfflineCredential() async {
+    final user = await getUser();
+    final username = (user?['username'] ?? '').toString().trim();
+    if (username.isEmpty) return false;
+    final saved = await getOfflineLoginCredential(username);
+    if (saved == null) return false;
+    final password = (saved['password'] ?? '').toString();
+    if (password.isEmpty) return false;
+    try {
+      await login(username: username, password: password);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<Map<String, dynamic>> login({
     required String username,
     required String password,
@@ -201,7 +320,7 @@ class Api {
 
     final data = jsonDecode(res.body) as Map<String, dynamic>;
     await saveToken(data['token']);
-    if (data['user'] is Map<String, dynamic>) {
+    if (data['user'] is Map) {
       final user = Map<String, dynamic>.from(data['user'] as Map);
       if (data['permissions'] is Map<String, dynamic>) {
         user['permissions'] = data['permissions'];
@@ -210,6 +329,19 @@ class Api {
         user['business_ids'] = data['business_ids'];
       }
       await saveUser(user);
+      await saveOfflineLoginCredential(
+        username: username,
+        user: user,
+        password: password,
+        salt: (((data['offline_auth'] as Map?)?['salt']) ??
+                user['offline_auth_salt'])
+            ?.toString(),
+        version: int.tryParse((((data['offline_auth'] as Map?)?['version']) ??
+                    user['offline_auth_version'] ??
+                    1)
+                .toString()) ??
+            1,
+      );
     }
     return data;
   }
@@ -242,7 +374,7 @@ class Api {
 
     final data = jsonDecode(res.body) as Map<String, dynamic>;
     await saveToken(data['token']);
-    if (data['user'] is Map<String, dynamic>) {
+    if (data['user'] is Map) {
       final user = Map<String, dynamic>.from(data['user'] as Map);
       if (data['permissions'] is Map<String, dynamic>) {
         user['permissions'] = data['permissions'];
@@ -251,6 +383,19 @@ class Api {
         user['business_ids'] = data['business_ids'];
       }
       await saveUser(user);
+      await saveOfflineLoginCredential(
+        username: username,
+        user: user,
+        password: password,
+        salt: (((data['offline_auth'] as Map?)?['salt']) ??
+                user['offline_auth_salt'])
+            ?.toString(),
+        version: int.tryParse((((data['offline_auth'] as Map?)?['version']) ??
+                    user['offline_auth_version'] ??
+                    1)
+                .toString()) ??
+            1,
+      );
     }
     return data;
   }
@@ -424,9 +569,11 @@ class Api {
       return created;
     } catch (e) {
       if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      final tempId = _tempOfflineId();
       await OfflineQueue.push(
         action: 'customer.create',
         payload: {
+          'localCustomerId': tempId,
           'businessId': businessId,
           'name': name,
           'phone': phone,
@@ -434,7 +581,7 @@ class Api {
         },
       );
       final local = {
-        'id': _tempOfflineId(),
+        'id': tempId,
         'business_id': businessId,
         'name': name,
         'phone': phone,
@@ -558,11 +705,16 @@ class Api {
       return created;
     } catch (e) {
       if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      final customer = await findCachedCustomerByAnyId(
+          businessId: businessId, anyId: customerId);
       await OfflineQueue.push(
         action: 'transaction.create',
         payload: {
           'businessId': businessId,
           'customerId': customerId,
+          'customerName': (customer?['name'] ?? '').toString(),
+          'customerPhone': customer?['phone']?.toString(),
+          'customerPhotoPath': customer?['photo_path']?.toString(),
           'amount': amount,
           'type': type,
           'note': note,
@@ -1326,23 +1478,34 @@ class Api {
   static Future<List<dynamic>> getItemMovements({
     required int itemId,
   }) async {
-    final token = await getToken();
-    debugPrint('GET /items/$itemId/movements');
-    final res = await http.get(
-      Uri.parse('$baseUrl/items/$itemId/movements'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
+    final cacheKey = 'item_movements_i_$itemId';
+    try {
+      final token = await getToken();
+      debugPrint('GET /items/$itemId/movements');
+      final res = await http.get(
+        Uri.parse('$baseUrl/items/$itemId/movements'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
 
-    if (res.statusCode != 200) {
+      if (res.statusCode != 200) {
+        debugPrint('Movements response: ${res.statusCode} ${res.body}');
+        throw Exception('Fetch item movements failed: ${res.body}');
+      }
+
       debugPrint('Movements response: ${res.statusCode} ${res.body}');
-      throw Exception('Fetch item movements failed: ${res.body}');
+      final decoded = jsonDecode(res.body);
+      await _cacheSet(cacheKey, decoded);
+      if (decoded is List<dynamic>) return decoded;
+      return const [];
+    } catch (e) {
+      if (!_isNetworkError(e)) rethrow;
+      final cached = await _cacheGet(cacheKey);
+      if (cached is List<dynamic>) return cached;
+      return const [];
     }
-
-    debugPrint('Movements response: ${res.statusCode} ${res.body}');
-    return jsonDecode(res.body) as List<dynamic>;
   }
 
   static Future<List<dynamic>> getSales({
@@ -1475,8 +1638,19 @@ class Api {
         'business_id': businessId,
         'bill_number': billNumber,
         'date': date,
+        'party_name': partyName,
+        'party_phone': partyPhone,
+        'customer_id': customerId,
         'payment_mode': paymentMode,
+        'manual_amount': manualAmount,
+        'total_amount': manualAmount,
         'amount': manualAmount,
+        'paid_amount':
+            receivedAmount ?? (paymentMode == 'unpaid' ? 0.0 : manualAmount),
+        'balance_due': paymentMode == 'unpaid' ? manualAmount : 0.0,
+        'due_date': dueDate,
+        'payment_reference': paymentReference,
+        'private_notes': privateNotes,
         'offline_queued': true,
       };
       await _prependCachedList('sales_b_$businessId', local);
@@ -1518,30 +1692,54 @@ class Api {
     required String settlementMode, // credit_party|cash|card
     double? manualAmount,
     List<Map<String, dynamic>>? items,
+    bool queueOnFailure = true,
   }) async {
-    final token = await getToken();
-    final res = await http.post(
-      Uri.parse('$baseUrl/sales/returns'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: jsonEncode({
+    final payload = {
+      'business_id': businessId,
+      'return_number': returnNumber,
+      'date': date,
+      'sale_id': saleId,
+      'customer_id': customerId,
+      'settlement_mode': settlementMode,
+      'manual_amount': manualAmount,
+      'items': items ?? const <Map<String, dynamic>>[],
+    };
+    try {
+      final token = await getToken();
+      final res = await http.post(
+        Uri.parse('$baseUrl/sales/returns'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode(payload),
+      );
+      if (res.statusCode != 201) {
+        throw Exception('Create sale return failed: ${res.body}');
+      }
+      final created = jsonDecode(res.body) as Map<String, dynamic>;
+      await _prependCachedList('sale_returns_b_$businessId', created);
+      return created;
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(action: 'sale_return.create', payload: payload);
+      final local = <String, dynamic>{
+        'id': _tempOfflineId(),
         'business_id': businessId,
         'return_number': returnNumber,
         'date': date,
         'sale_id': saleId,
         'customer_id': customerId,
         'settlement_mode': settlementMode,
-        'manual_amount': manualAmount,
-        'items': items ?? const [],
-      }),
-    );
-    if (res.statusCode != 201) {
-      throw Exception('Create sale return failed: ${res.body}');
+        'manual_amount': manualAmount ?? 0,
+        'total_amount': manualAmount ?? 0,
+        'items': items ?? const <Map<String, dynamic>>[],
+        'offline_queued': true,
+      };
+      await _prependCachedList('sale_returns_b_$businessId', local);
+      return local;
     }
-    return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
   static Future<Map<String, dynamic>> createSalePayment({
@@ -1553,60 +1751,116 @@ class Api {
     required String paymentMode, // cash|card
     String? note,
     List<int>? saleIds,
+    bool queueOnFailure = true,
   }) async {
-    final token = await getToken();
-    final res = await http.post(
-      Uri.parse('$baseUrl/sales/payments'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: jsonEncode({
+    final payload = {
+      'business_id': businessId,
+      'payment_number': paymentNumber,
+      'date': date,
+      'customer_id': customerId,
+      'amount': amount,
+      'payment_mode': paymentMode,
+      'note': note,
+      'sale_ids': saleIds ?? const [],
+    };
+    try {
+      final token = await getToken();
+      final res = await http.post(
+        Uri.parse('$baseUrl/sales/payments'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode(payload),
+      );
+      if (res.statusCode != 201) {
+        throw Exception('Create sale payment failed: ${res.body}');
+      }
+      final created = jsonDecode(res.body) as Map<String, dynamic>;
+      await _prependCachedList('transactions_b_$businessId', created);
+      await _prependCachedList('customer_tx_c_$customerId', created);
+      return created;
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(action: 'sale_payment.create', payload: payload);
+      final offlineNote = (note == null || note.trim().isEmpty)
+          ? 'Payment In #$paymentNumber (${paymentMode.toUpperCase()})'
+          : note.trim();
+      final createdAt = DateTime.tryParse(date)?.toIso8601String() ??
+          DateTime.now().toIso8601String();
+      final local = <String, dynamic>{
+        'id': _tempOfflineId(),
         'business_id': businessId,
-        'payment_number': paymentNumber,
-        'date': date,
         'customer_id': customerId,
         'amount': amount,
-        'payment_mode': paymentMode,
-        'note': note,
-        'sale_ids': saleIds ?? const [],
-      }),
-    );
-    if (res.statusCode != 201) {
-      throw Exception('Create sale payment failed: ${res.body}');
+        'type': 'DEBIT',
+        'note': offlineNote,
+        'created_at': createdAt,
+        'offline_queued': true,
+      };
+      await _prependCachedList('transactions_b_$businessId', local);
+      await _prependCachedList('customer_tx_c_$customerId', local);
+      return local;
     }
-    return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
   static Future<List<dynamic>> getSaleReturns({
     required int businessId,
   }) async {
-    final token = await getToken();
-    final res = await http.get(
-      Uri.parse('$baseUrl/sales/returns?business_id=$businessId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
-    if (res.statusCode != 200) {
-      throw Exception('Fetch sale returns failed: ${res.body}');
+    final cacheKey = 'sale_returns_b_$businessId';
+    try {
+      final token = await getToken();
+      final res = await http.get(
+        Uri.parse('$baseUrl/sales/returns?business_id=$businessId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
+      if (res.statusCode != 200) {
+        throw Exception('Fetch sale returns failed: ${res.body}');
+      }
+      final decoded = jsonDecode(res.body);
+      await _cacheSet(cacheKey, decoded);
+      return _extractLiveList(decoded);
+    } catch (e) {
+      if (!_isNetworkError(e)) rethrow;
+      return _getCachedLiveList(cacheKey);
     }
-    return _extractLiveList(jsonDecode(res.body));
   }
 
-  static Future<void> deleteSaleReturn(int saleReturnId) async {
-    final token = await getToken();
-    final res = await http.delete(
-      Uri.parse('$baseUrl/sales/returns/$saleReturnId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
-    if (res.statusCode != 200) {
-      throw Exception('Delete sale return failed: ${res.body}');
+  static Future<void> deleteSaleReturn(
+    int saleReturnId, {
+    int? businessId,
+    bool queueOnFailure = true,
+  }) async {
+    try {
+      final token = await getToken();
+      final res = await http.delete(
+        Uri.parse('$baseUrl/sales/returns/$saleReturnId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
+      if (res.statusCode != 200) {
+        throw Exception('Delete sale return failed: ${res.body}');
+      }
+      if (businessId != null) {
+        await _removeFromCachedListById(
+            'sale_returns_b_$businessId', saleReturnId);
+      }
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'sale_return.delete',
+        payload: {'saleReturnId': saleReturnId},
+      );
+      if (businessId != null) {
+        await _removeFromCachedListById(
+            'sale_returns_b_$businessId', saleReturnId);
+      }
     }
   }
 
@@ -1742,8 +1996,19 @@ class Api {
         'business_id': businessId,
         'purchase_number': purchaseNumber,
         'date': date,
+        'party_name': partyName,
+        'party_phone': partyPhone,
+        'supplier_id': supplierId,
         'payment_mode': paymentMode,
+        'manual_amount': manualAmount,
+        'total_amount': manualAmount,
         'amount': manualAmount,
+        'paid_amount':
+            paidAmount ?? (paymentMode == 'unpaid' ? 0.0 : manualAmount),
+        'balance_due': paymentMode == 'unpaid' ? manualAmount : 0.0,
+        'due_date': dueDate,
+        'payment_reference': paymentReference,
+        'private_notes': privateNotes,
         'offline_queued': true,
       };
       await _prependCachedList('purchases_b_$businessId', local);
@@ -1785,30 +2050,55 @@ class Api {
     required String settlementMode, // credit_party|cash|card
     double? manualAmount,
     List<Map<String, dynamic>>? items,
+    bool queueOnFailure = true,
   }) async {
-    final token = await getToken();
-    final res = await http.post(
-      Uri.parse('$baseUrl/purchases/returns'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: jsonEncode({
+    final payload = {
+      'business_id': businessId,
+      'return_number': returnNumber,
+      'date': date,
+      'purchase_id': purchaseId,
+      'supplier_id': supplierId,
+      'settlement_mode': settlementMode,
+      'manual_amount': manualAmount,
+      'items': items ?? const <Map<String, dynamic>>[],
+    };
+    try {
+      final token = await getToken();
+      final res = await http.post(
+        Uri.parse('$baseUrl/purchases/returns'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode(payload),
+      );
+      if (res.statusCode != 201) {
+        throw Exception('Create purchase return failed: ${res.body}');
+      }
+      final created = jsonDecode(res.body) as Map<String, dynamic>;
+      await _prependCachedList('purchase_returns_b_$businessId', created);
+      return created;
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+          action: 'purchase_return.create', payload: payload);
+      final local = <String, dynamic>{
+        'id': _tempOfflineId(),
         'business_id': businessId,
         'return_number': returnNumber,
         'date': date,
         'purchase_id': purchaseId,
         'supplier_id': supplierId,
         'settlement_mode': settlementMode,
-        'manual_amount': manualAmount,
-        'items': items ?? const [],
-      }),
-    );
-    if (res.statusCode != 201) {
-      throw Exception('Create purchase return failed: ${res.body}');
+        'manual_amount': manualAmount ?? 0,
+        'total_amount': manualAmount ?? 0,
+        'items': items ?? const <Map<String, dynamic>>[],
+        'offline_queued': true,
+      };
+      await _prependCachedList('purchase_returns_b_$businessId', local);
+      return local;
     }
-    return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
   static Future<Map<String, dynamic>> createPurchasePayment({
@@ -1820,60 +2110,117 @@ class Api {
     required String paymentMode, // cash|card
     String? note,
     List<int>? purchaseIds,
+    bool queueOnFailure = true,
   }) async {
-    final token = await getToken();
-    final res = await http.post(
-      Uri.parse('$baseUrl/purchases/payments'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: jsonEncode({
+    final payload = {
+      'business_id': businessId,
+      'payment_number': paymentNumber,
+      'date': date,
+      'supplier_id': supplierId,
+      'amount': amount,
+      'payment_mode': paymentMode,
+      'note': note,
+      'purchase_ids': purchaseIds ?? const [],
+    };
+    try {
+      final token = await getToken();
+      final res = await http.post(
+        Uri.parse('$baseUrl/purchases/payments'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode(payload),
+      );
+      if (res.statusCode != 201) {
+        throw Exception('Create purchase payment failed: ${res.body}');
+      }
+      final created = jsonDecode(res.body) as Map<String, dynamic>;
+      await _prependCachedList('supplier_transactions_b_$businessId', created);
+      await _prependCachedList('supplier_tx_s_$supplierId', created);
+      return created;
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+          action: 'purchase_payment.create', payload: payload);
+      final offlineNote = (note == null || note.trim().isEmpty)
+          ? 'Payment Out #$paymentNumber (${paymentMode.toUpperCase()})'
+          : note.trim();
+      final createdAt = DateTime.tryParse(date)?.toIso8601String() ??
+          DateTime.now().toIso8601String();
+      final local = <String, dynamic>{
+        'id': _tempOfflineId(),
         'business_id': businessId,
-        'payment_number': paymentNumber,
-        'date': date,
         'supplier_id': supplierId,
         'amount': amount,
-        'payment_mode': paymentMode,
-        'note': note,
-        'purchase_ids': purchaseIds ?? const [],
-      }),
-    );
-    if (res.statusCode != 201) {
-      throw Exception('Create purchase payment failed: ${res.body}');
+        'type': 'CREDIT',
+        'note': offlineNote,
+        'created_at': createdAt,
+        'offline_queued': true,
+      };
+      await _prependCachedList('supplier_transactions_b_$businessId', local);
+      await _prependCachedList('supplier_tx_s_$supplierId', local);
+      return local;
     }
-    return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
   static Future<List<dynamic>> getPurchaseReturns({
     required int businessId,
   }) async {
-    final token = await getToken();
-    final res = await http.get(
-      Uri.parse('$baseUrl/purchases/returns?business_id=$businessId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
-    if (res.statusCode != 200) {
-      throw Exception('Fetch purchase returns failed: ${res.body}');
+    final cacheKey = 'purchase_returns_b_$businessId';
+    try {
+      final token = await getToken();
+      final res = await http.get(
+        Uri.parse('$baseUrl/purchases/returns?business_id=$businessId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
+      if (res.statusCode != 200) {
+        throw Exception('Fetch purchase returns failed: ${res.body}');
+      }
+      final decoded = jsonDecode(res.body);
+      await _cacheSet(cacheKey, decoded);
+      return _extractLiveList(decoded);
+    } catch (e) {
+      if (!_isNetworkError(e)) rethrow;
+      return _getCachedLiveList(cacheKey);
     }
-    return _extractLiveList(jsonDecode(res.body));
   }
 
-  static Future<void> deletePurchaseReturn(int purchaseReturnId) async {
-    final token = await getToken();
-    final res = await http.delete(
-      Uri.parse('$baseUrl/purchases/returns/$purchaseReturnId'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
-    if (res.statusCode != 200) {
-      throw Exception('Delete purchase return failed: ${res.body}');
+  static Future<void> deletePurchaseReturn(
+    int purchaseReturnId, {
+    int? businessId,
+    bool queueOnFailure = true,
+  }) async {
+    try {
+      final token = await getToken();
+      final res = await http.delete(
+        Uri.parse('$baseUrl/purchases/returns/$purchaseReturnId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
+      if (res.statusCode != 200) {
+        throw Exception('Delete purchase return failed: ${res.body}');
+      }
+      if (businessId != null) {
+        await _removeFromCachedListById(
+            'purchase_returns_b_$businessId', purchaseReturnId);
+      }
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'purchase_return.delete',
+        payload: {'purchaseReturnId': purchaseReturnId},
+      );
+      if (businessId != null) {
+        await _removeFromCachedListById(
+            'purchase_returns_b_$businessId', purchaseReturnId);
+      }
     }
   }
 
@@ -2106,18 +2453,28 @@ class Api {
   static Future<Map<String, dynamic>> getExpense({
     required int id,
   }) async {
-    final token = await getToken();
-    final res = await http.get(
-      Uri.parse('$baseUrl/expenses/$id'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
-    );
-    if (res.statusCode != 200) {
-      throw Exception('Fetch expense failed: ${res.body}');
+    final cacheKey = 'expense_i_$id';
+    try {
+      final token = await getToken();
+      final res = await http.get(
+        Uri.parse('$baseUrl/expenses/$id'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
+      if (res.statusCode != 200) {
+        throw Exception('Fetch expense failed: ${res.body}');
+      }
+      final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+      await _cacheSet(cacheKey, decoded);
+      return decoded;
+    } catch (e) {
+      if (!_isNetworkError(e)) rethrow;
+      final cached = await _getCachedMap(cacheKey);
+      if (cached.isNotEmpty) return cached;
+      rethrow;
     }
-    return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
   static Future<Map<String, dynamic>> updateExpense({
@@ -2192,6 +2549,30 @@ class Api {
     } catch (e) {
       if (!_isNetworkError(e)) rethrow;
       return _getCachedMap(cacheKey);
+    }
+  }
+
+  static Future<void> prefetchBusinessData({
+    required int businessId,
+  }) async {
+    try {
+      await Future.wait([
+        getCustomers(businessId: businessId),
+        getSuppliers(businessId: businessId),
+        getAllTransactions(businessId: businessId),
+        getAllSupplierTransactions(businessId: businessId),
+        getItems(businessId: businessId, type: 'product'),
+        getSales(businessId: businessId),
+        getPurchases(businessId: businessId),
+        getSaleReturns(businessId: businessId),
+        getPurchaseReturns(businessId: businessId),
+        getExpenses(businessId: businessId),
+        getExpenseCategories(businessId: businessId),
+        getExpenseItems(businessId: businessId),
+        getCashbook(businessId: businessId),
+      ]);
+    } catch (_) {
+      // best-effort cache warm-up
     }
   }
 }

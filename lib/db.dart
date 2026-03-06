@@ -124,6 +124,13 @@ class Db {
     );
   }
 
+  Future<void> close() async {
+    final db = _db;
+    if (db == null) return;
+    await db.close();
+    _db = null;
+  }
+
   Future<void> upsertUser(Map<String, dynamic> user) async {
     final db = await database;
     await db.insert(
@@ -541,5 +548,51 @@ class Db {
       ''',
       [error, DateTime.now().toIso8601String(), id],
     );
+  }
+
+  Future<void> updatePendingOpPayload(
+      int id, Map<String, dynamic> payload) async {
+    final db = await database;
+    await db.update(
+      'pending_ops',
+      {
+        'payload': jsonEncode(payload),
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> remapPendingCustomerId({
+    required int fromId,
+    required int toId,
+  }) async {
+    if (fromId == toId) return;
+    final rows = await listPendingOps(limit: 10000);
+    for (final row in rows) {
+      final id = row['id'] as int;
+      Map<String, dynamic> payload = {};
+      try {
+        payload = Map<String, dynamic>.from(
+          jsonDecode((row['payload'] ?? '{}').toString()) as Map,
+        );
+      } catch (_) {
+        continue;
+      }
+      var changed = false;
+      for (final key in const ['customerId', 'customer_id']) {
+        final raw = payload[key];
+        final v =
+            raw is num ? raw.toInt() : int.tryParse(raw?.toString() ?? '');
+        if (v == fromId) {
+          payload[key] = toId;
+          changed = true;
+        }
+      }
+      if (changed) {
+        await updatePendingOpPayload(id, payload);
+      }
+    }
   }
 }

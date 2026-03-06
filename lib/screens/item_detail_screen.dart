@@ -67,6 +67,7 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
 
     await showModalBottomSheet(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
@@ -200,8 +201,7 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                             ),
                             actions: [
                               TextButton(
-                                onPressed: () =>
-                                    Navigator.pop(context, null),
+                                onPressed: () => Navigator.pop(context, null),
                                 child: const Text('Cancel'),
                               ),
                               TextButton(
@@ -227,8 +227,7 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                   width: double.infinity,
                   child: ElevatedButton(
                     onPressed: () async {
-                      final qty =
-                          int.tryParse(qtyController.text.trim()) ?? 0;
+                      final qty = int.tryParse(qtyController.text.trim()) ?? 0;
                       if (qty <= 0) return;
                       final price =
                           double.tryParse(priceController.text.trim()) ?? 0;
@@ -244,7 +243,8 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                       );
                       final updated = result['item'] as Map<String, dynamic>;
                       widget.item.currentStock = int.tryParse(
-                              (updated['current_stock'] ?? widget.item.currentStock)
+                              (updated['current_stock'] ??
+                                      widget.item.currentStock)
                                   .toString()) ??
                           widget.item.currentStock;
                       if (type == 'in') {
@@ -474,7 +474,8 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                           final type = (m['type'] ?? '').toString();
                           final qty = (m['quantity'] ?? 0).toString();
                           final price = (m['price'] ?? 0).toString();
-                          final date = (m['created_at'] ?? m['date'] ?? '').toString();
+                          final date =
+                              (m['created_at'] ?? m['date'] ?? '').toString();
                           final balance =
                               (m['running_balance'] ?? item.currentStock)
                                   .toString();

@@ -203,6 +203,7 @@ class _SaleInvoiceScreenState extends State<SaleInvoiceScreen> {
 
     final selected = await showModalBottomSheet<BluetoothDevice>(
       context: context,
+      useSafeArea: true,
       builder: (context) => SafeArea(
         child: ListView(
           shrinkWrap: true,

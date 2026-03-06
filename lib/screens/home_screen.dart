@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -53,6 +54,11 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     await _loadData();
+    if (_activeBusinessServerId != null) {
+      unawaited(
+        Api.prefetchBusinessData(businessId: _activeBusinessServerId!),
+      );
+    }
   }
 
   Future<void> _autoSelectBusiness() async {
@@ -456,6 +462,7 @@ class _HomeScreenState extends State<HomeScreen> {
   ) {
     showModalBottomSheet(
       context: context,
+      useSafeArea: true,
       isScrollControlled: false,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),

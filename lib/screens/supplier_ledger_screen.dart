@@ -6,7 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 import 'package:screenshot/screenshot.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -173,6 +176,7 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
     DateTime? selected = _dueDate;
     showModalBottomSheet(
       context: context,
+      useSafeArea: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -488,6 +492,289 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
     }
   }
 
+  List<Map<String, dynamic>> _allEntriesAsc() {
+    final entriesAsc = _transactions.reversed.toList();
+    return entriesAsc;
+  }
+
+  String _reportPeriodLabel(List<Map<String, dynamic>> entries) {
+    if (entries.isEmpty)
+      return DateFormat('dd MMM yyyy').format(DateTime.now());
+    final dates = entries
+        .map((t) => DateTime.tryParse((t['created_at'] ?? '').toString()))
+        .whereType<DateTime>()
+        .toList();
+    if (dates.isEmpty) return DateFormat('dd MMM yyyy').format(DateTime.now());
+    dates.sort((a, b) => a.compareTo(b));
+    final start = DateFormat('dd MMM yyyy').format(dates.first);
+    final end = DateFormat('dd MMM yyyy').format(dates.last);
+    return '$start - $end';
+  }
+
+  List<Map<String, dynamic>> _filterEntriesByDateRange({
+    required DateTime start,
+    required DateTime end,
+  }) {
+    final s = DateTime(start.year, start.month, start.day);
+    final e = DateTime(end.year, end.month, end.day, 23, 59, 59, 999);
+    return _allEntriesAsc().where((t) {
+      final dt = DateTime.tryParse((t['created_at'] ?? '').toString());
+      if (dt == null) return false;
+      return !dt.isBefore(s) && !dt.isAfter(e);
+    }).toList();
+  }
+
+  Future<List<Map<String, dynamic>>?> _pickReportEntries() async {
+    final option = await showModalBottomSheet<String>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.of(ctx).size.height * 0.7,
+          child: Column(
+            children: [
+              const ListTile(
+                title: Text(
+                  'Select report duration',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              Expanded(
+                child: ListView(
+                  children: [
+                    ListTile(
+                        title: const Text('All'),
+                        onTap: () => Navigator.pop(ctx, 'all')),
+                    ListTile(
+                        title: const Text('This Month'),
+                        onTap: () => Navigator.pop(ctx, 'this_month')),
+                    ListTile(
+                        title: const Text('Last Month'),
+                        onTap: () => Navigator.pop(ctx, 'last_month')),
+                    ListTile(
+                        title: const Text('This Week'),
+                        onTap: () => Navigator.pop(ctx, 'this_week')),
+                    ListTile(
+                        title: const Text('Today'),
+                        onTap: () => Navigator.pop(ctx, 'today')),
+                    ListTile(
+                        title: const Text('Yesterday'),
+                        onTap: () => Navigator.pop(ctx, 'yesterday')),
+                    ListTile(
+                        title: const Text('Single Day'),
+                        onTap: () => Navigator.pop(ctx, 'single_day')),
+                    ListTile(
+                        title: const Text('Date Range'),
+                        onTap: () => Navigator.pop(ctx, 'date_range')),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (option == null) return null;
+
+    final now = DateTime.now();
+    if (option == 'all') return _allEntriesAsc();
+    if (option == 'today') {
+      return _filterEntriesByDateRange(start: now, end: now);
+    }
+    if (option == 'yesterday') {
+      final y = now.subtract(const Duration(days: 1));
+      return _filterEntriesByDateRange(start: y, end: y);
+    }
+    if (option == 'this_week') {
+      final start = now.subtract(Duration(days: now.weekday - 1));
+      return _filterEntriesByDateRange(start: start, end: now);
+    }
+    if (option == 'this_month') {
+      final start = DateTime(now.year, now.month, 1);
+      final end = DateTime(now.year, now.month + 1, 0);
+      return _filterEntriesByDateRange(start: start, end: end);
+    }
+    if (option == 'last_month') {
+      final start = DateTime(now.year, now.month - 1, 1);
+      final end = DateTime(now.year, now.month, 0);
+      return _filterEntriesByDateRange(start: start, end: end);
+    }
+    if (option == 'single_day') {
+      final day = await showDatePicker(
+        context: context,
+        initialDate: now,
+        firstDate: DateTime(2020),
+        lastDate: DateTime(2100),
+      );
+      if (day == null) return null;
+      return _filterEntriesByDateRange(start: day, end: day);
+    }
+    if (option == 'date_range') {
+      final start = await showDatePicker(
+        context: context,
+        initialDate: now,
+        firstDate: DateTime(2020),
+        lastDate: DateTime(2100),
+      );
+      if (start == null) return null;
+      final end = await showDatePicker(
+        context: context,
+        initialDate: start,
+        firstDate: start,
+        lastDate: DateTime(2100),
+      );
+      if (end == null) return null;
+      return _filterEntriesByDateRange(start: start, end: end);
+    }
+    return _allEntriesAsc();
+  }
+
+  Future<File> _buildSupplierReportPdf({
+    required List<Map<String, dynamic>> entriesAsc,
+  }) async {
+    final supplierName = (widget.supplier['name'] ?? 'Supplier').toString();
+    final supplierPhone = (widget.supplier['phone'] ?? '').toString();
+    final now = DateTime.now();
+    final totalCredit = entriesAsc
+        .where((t) => (t['type'] ?? '').toString().toUpperCase() == 'CREDIT')
+        .fold<double>(0, (sum, t) => sum + _asDouble(t['amount']));
+    final totalDebit = entriesAsc
+        .where((t) => (t['type'] ?? '').toString().toUpperCase() == 'DEBIT')
+        .fold<double>(0, (sum, t) => sum + _asDouble(t['amount']));
+    final net = totalCredit - totalDebit;
+
+    final pdf = pw.Document();
+    pdf.addPage(
+      pw.MultiPage(
+        pageTheme: const pw.PageTheme(
+          margin: pw.EdgeInsets.all(24),
+        ),
+        build: (context) => [
+          pw.Text(
+            'Supplier Report',
+            style: pw.TextStyle(
+              fontSize: 20,
+              fontWeight: pw.FontWeight.bold,
+              color: PdfColors.blue900,
+            ),
+          ),
+          pw.SizedBox(height: 10),
+          pw.Text('Supplier: $supplierName'),
+          if (supplierPhone.trim().isNotEmpty) pw.Text('Phone: $supplierPhone'),
+          pw.Text('Period: ${_reportPeriodLabel(entriesAsc)}'),
+          pw.Text(
+              'Generated: ${DateFormat('dd MMM yyyy hh:mm a').format(now)}'),
+          pw.SizedBox(height: 14),
+          pw.Container(
+            padding: const pw.EdgeInsets.all(10),
+            decoration: pw.BoxDecoration(
+              border: pw.Border.all(color: PdfColors.grey300),
+              borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+            ),
+            child: pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text('You gave: AED ${totalCredit.toStringAsFixed(0)}'),
+                pw.Text('You got: AED ${totalDebit.toStringAsFixed(0)}'),
+                pw.Text(
+                  'Net: AED ${net.abs().toStringAsFixed(0)}',
+                  style: pw.TextStyle(
+                    fontWeight: pw.FontWeight.bold,
+                    color: net >= 0 ? PdfColors.red700 : PdfColors.green700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          pw.SizedBox(height: 10),
+          pw.Table.fromTextArray(
+            headerStyle: pw.TextStyle(
+              fontWeight: pw.FontWeight.bold,
+              color: PdfColors.black,
+            ),
+            headerDecoration: const pw.BoxDecoration(color: PdfColors.grey200),
+            cellAlignment: pw.Alignment.centerLeft,
+            headerAlignment: pw.Alignment.centerLeft,
+            columnWidths: {
+              0: const pw.FlexColumnWidth(1.3),
+              1: const pw.FlexColumnWidth(1.7),
+              2: const pw.FlexColumnWidth(1.1),
+              3: const pw.FlexColumnWidth(1.2),
+              4: const pw.FlexColumnWidth(1.2),
+            },
+            headers: const ['Date', 'Note', 'Type', 'Amount', 'Balance'],
+            data: entriesAsc.map((t) {
+              final type = (t['type'] ?? '').toString().toUpperCase();
+              final date =
+                  DateTime.tryParse((t['created_at'] ?? '').toString());
+              final dateLabel = date == null
+                  ? '-'
+                  : DateFormat('dd MMM yy, hh:mm a').format(date);
+              return [
+                dateLabel,
+                (t['note'] ?? '').toString(),
+                type == 'CREDIT' ? 'You gave' : 'You got',
+                'AED ${_asDouble(t['amount']).toStringAsFixed(0)}',
+                'AED ${_asDouble(t['running_balance']).toStringAsFixed(0)}',
+              ];
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+
+    final dir = await getApplicationDocumentsDirectory();
+    final file = File(
+      '${dir.path}/supplier_report_${widget.supplier['id']}_${DateTime.now().millisecondsSinceEpoch}.pdf',
+    );
+    await file.writeAsBytes(await pdf.save(), flush: true);
+    return file;
+  }
+
+  Future<void> _downloadSupplierReportPdf() async {
+    try {
+      final entriesAsc = await _pickReportEntries();
+      if (entriesAsc == null) return;
+      if (entriesAsc.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('No entries found for selected duration')),
+        );
+        return;
+      }
+      final file = await _buildSupplierReportPdf(entriesAsc: entriesAsc);
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Report saved'),
+          content: Text('Saved to:\n${file.path}'),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                await OpenFilex.open(file.path);
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+              child: const Text('Open PDF'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to generate report: $e')),
+      );
+    }
+  }
+
   Future<void> _openAdd(String type) async {
     await _showAddEntrySheet(type);
   }
@@ -505,6 +792,7 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
 
     await showModalBottomSheet<void>(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) {
@@ -736,6 +1024,7 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
 
     await showModalBottomSheet<void>(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) {
@@ -1113,7 +1402,11 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                const _QuickAction(icon: Icons.picture_as_pdf, label: 'Report'),
+                _QuickAction(
+                  icon: Icons.picture_as_pdf,
+                  label: 'Report',
+                  onTap: _downloadSupplierReportPdf,
+                ),
                 _QuickAction(
                   icon: Icons.edit,
                   label: 'Edit',

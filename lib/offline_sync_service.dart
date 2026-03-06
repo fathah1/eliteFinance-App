@@ -72,17 +72,39 @@ class OfflineSyncService {
         ),
       );
 
-      final token = await Api.getToken();
-      if (token == null || token.isEmpty) {
-        await refreshStatus();
-        return;
-      }
       final online = await _isOnline();
       if (!online) {
         _setStatus(status.value.copyWith(isOnline: false, isSyncing: false));
         return;
       }
       _setStatus(status.value.copyWith(isOnline: true));
+
+      var token = await Api.getToken();
+      if (token == null || token.isEmpty) {
+        final restored =
+            await Api.trySilentOnlineReloginFromOfflineCredential();
+        if (!restored) {
+          _setStatus(
+            status.value.copyWith(
+              isSyncing: false,
+              lastError: 'Online re-login required to sync queued data.',
+            ),
+          );
+          await refreshStatus();
+          return;
+        }
+        token = await Api.getToken();
+        if (token == null || token.isEmpty) {
+          _setStatus(
+            status.value.copyWith(
+              isSyncing: false,
+              lastError: 'Missing auth token for sync.',
+            ),
+          );
+          await refreshStatus();
+          return;
+        }
+      }
 
       final ops = await Db.instance.listPendingOps(limit: 50);
       for (final op in ops) {
@@ -96,6 +118,7 @@ class OfflineSyncService {
         } catch (_) {}
 
         try {
+          debugPrint('Offline sync dispatch: #$id $action');
           await _dispatch(action: action, payload: payload);
           await Db.instance.deletePendingOp(id);
           final queued = await Db.instance.pendingOpsCount();
@@ -107,6 +130,46 @@ class OfflineSyncService {
             ),
           );
         } catch (e) {
+          if (_isInvalidCustomerError(e)) {
+            final repaired = await _repairCustomerReference(
+              opId: id,
+              action: action,
+              payload: payload,
+            );
+            if (repaired) {
+              try {
+                debugPrint(
+                    'Offline sync retry: #$id $action (customer repaired)');
+                await _dispatch(action: action, payload: payload);
+                await Db.instance.deletePendingOp(id);
+                final queued = await Db.instance.pendingOpsCount();
+                _setStatus(
+                  status.value.copyWith(
+                    queuedCount: queued,
+                    isSyncing: queued > 0,
+                    clearError: true,
+                  ),
+                );
+                continue;
+              } catch (retryError) {
+                debugPrint(
+                    'Offline sync retry failed: #$id $action => $retryError');
+                await Db.instance.markPendingOpAttempt(
+                  id,
+                  error: retryError.toString(),
+                );
+                _setStatus(
+                  status.value.copyWith(
+                    lastError: retryError.toString(),
+                    isOnline: !_isNetworkError(retryError),
+                  ),
+                );
+                if (_isNetworkError(retryError)) break;
+                continue;
+              }
+            }
+          }
+          debugPrint('Offline sync failed: #$id $action => $e');
           await Db.instance.markPendingOpAttempt(id, error: e.toString());
           _setStatus(
             status.value.copyWith(
@@ -154,13 +217,39 @@ class OfflineSyncService {
   }) async {
     switch (action) {
       case 'customer.create':
-        await Api.createCustomer(
-          businessId: payload['businessId'] as int,
-          name: (payload['name'] ?? '').toString(),
-          phone: payload['phone']?.toString(),
-          photoPath: payload['photoPath']?.toString(),
-          queueOnFailure: false,
+        final businessId = payload['businessId'] as int;
+        final name = (payload['name'] ?? '').toString();
+        final phone = payload['phone']?.toString();
+        final localIdRaw = payload['localCustomerId'];
+        final localId = localIdRaw is num
+            ? localIdRaw.toInt()
+            : int.tryParse(localIdRaw?.toString() ?? '');
+
+        final existingId = await _findMatchingServerCustomerId(
+          businessId: businessId,
+          name: name,
+          phone: phone,
         );
+
+        int? serverId = existingId;
+        if (serverId == null) {
+          final created = await Api.createCustomer(
+            businessId: businessId,
+            name: name,
+            phone: phone,
+            photoPath: payload['photoPath']?.toString(),
+            queueOnFailure: false,
+          );
+          final serverIdRaw = created['id'];
+          serverId = serverIdRaw is num
+              ? serverIdRaw.toInt()
+              : int.tryParse(serverIdRaw?.toString() ?? '');
+        }
+
+        if (localId != null && serverId != null && localId != serverId) {
+          await Db.instance
+              .remapPendingCustomerId(fromId: localId, toId: serverId);
+        }
         return;
       case 'customer.update':
         await Api.updateCustomer(
@@ -376,17 +465,216 @@ class OfflineSyncService {
           queueOnFailure: false,
         );
         return;
+      case 'sale_return.create':
+        await Api.createSaleReturn(
+          businessId: payload['business_id'] as int,
+          returnNumber: payload['return_number'] as int,
+          date: (payload['date'] ?? '').toString(),
+          saleId: payload['sale_id'] as int?,
+          customerId: payload['customer_id'] as int?,
+          settlementMode: (payload['settlement_mode'] ?? '').toString(),
+          manualAmount: (payload['manual_amount'] as num?)?.toDouble(),
+          items: (payload['items'] as List?)?.cast<Map<String, dynamic>>(),
+          queueOnFailure: false,
+        );
+        return;
+      case 'sale_return.delete':
+        await Api.deleteSaleReturn(
+          payload['saleReturnId'] as int,
+          queueOnFailure: false,
+        );
+        return;
+      case 'sale_payment.create':
+        await Api.createSalePayment(
+          businessId: payload['business_id'] as int,
+          paymentNumber: payload['payment_number'] as int,
+          date: (payload['date'] ?? '').toString(),
+          customerId: payload['customer_id'] as int,
+          amount: (payload['amount'] as num).toDouble(),
+          paymentMode: (payload['payment_mode'] ?? 'cash').toString(),
+          note: payload['note']?.toString(),
+          saleIds: (payload['sale_ids'] as List?)
+              ?.map((e) => (e as num).toInt())
+              .toList(),
+          queueOnFailure: false,
+        );
+        return;
+      case 'purchase_return.create':
+        await Api.createPurchaseReturn(
+          businessId: payload['business_id'] as int,
+          returnNumber: payload['return_number'] as int,
+          date: (payload['date'] ?? '').toString(),
+          purchaseId: payload['purchase_id'] as int?,
+          supplierId: payload['supplier_id'] as int?,
+          settlementMode: (payload['settlement_mode'] ?? '').toString(),
+          manualAmount: (payload['manual_amount'] as num?)?.toDouble(),
+          items: (payload['items'] as List?)?.cast<Map<String, dynamic>>(),
+          queueOnFailure: false,
+        );
+        return;
+      case 'purchase_return.delete':
+        await Api.deletePurchaseReturn(
+          payload['purchaseReturnId'] as int,
+          queueOnFailure: false,
+        );
+        return;
+      case 'purchase_payment.create':
+        await Api.createPurchasePayment(
+          businessId: payload['business_id'] as int,
+          paymentNumber: payload['payment_number'] as int,
+          date: (payload['date'] ?? '').toString(),
+          supplierId: payload['supplier_id'] as int,
+          amount: (payload['amount'] as num).toDouble(),
+          paymentMode: (payload['payment_mode'] ?? 'cash').toString(),
+          note: payload['note']?.toString(),
+          purchaseIds: (payload['purchase_ids'] as List?)
+              ?.map((e) => (e as num).toInt())
+              .toList(),
+          queueOnFailure: false,
+        );
+        return;
       default:
         return;
     }
   }
 
+  Future<bool> _repairCustomerReference({
+    required int opId,
+    required String action,
+    required Map<String, dynamic> payload,
+  }) async {
+    if (action != 'transaction.create' &&
+        action != 'sale.create' &&
+        action != 'sale_payment.create') {
+      return false;
+    }
+    final businessId = _readInt(payload, ['businessId', 'business_id']);
+    final oldCustomerId = _readInt(payload, ['customerId', 'customer_id']);
+    if (businessId == null || oldCustomerId == null) return false;
+
+    String name = (payload['customerName'] ?? payload['partyName'] ?? '')
+        .toString()
+        .trim();
+    String? phone =
+        (payload['customerPhone'] ?? payload['partyPhone'])?.toString().trim();
+    final photoPath = payload['customerPhotoPath']?.toString();
+
+    if (name.isEmpty) {
+      final cached = await Api.findCachedCustomerByAnyId(
+        businessId: businessId,
+        anyId: oldCustomerId,
+      );
+      if (cached != null) {
+        name = (cached['name'] ?? '').toString().trim();
+        phone = (cached['phone'] ?? '').toString().trim();
+      }
+    }
+    if (name.isEmpty) return false;
+
+    final existingId = await _findMatchingServerCustomerId(
+      businessId: businessId,
+      name: name,
+      phone: phone,
+    );
+    int? newCustomerId = existingId;
+    if (newCustomerId == null) {
+      final created = await Api.createCustomer(
+        businessId: businessId,
+        name: name,
+        phone: phone?.isEmpty == true ? null : phone,
+        photoPath: photoPath?.isEmpty == true ? null : photoPath,
+        queueOnFailure: false,
+      );
+      final newCustomerIdRaw = created['id'];
+      newCustomerId = newCustomerIdRaw is num
+          ? newCustomerIdRaw.toInt()
+          : int.tryParse(newCustomerIdRaw?.toString() ?? '');
+    }
+    if (newCustomerId == null) return false;
+
+    if (payload.containsKey('customerId')) {
+      payload['customerId'] = newCustomerId;
+    }
+    if (payload.containsKey('customer_id')) {
+      payload['customer_id'] = newCustomerId;
+    }
+    if (payload.containsKey('partyName') &&
+        (payload['partyName']?.toString().trim().isEmpty ?? true)) {
+      payload['partyName'] = name;
+    }
+    if (payload.containsKey('partyPhone') &&
+        (payload['partyPhone'] == null ||
+            payload['partyPhone'].toString().trim().isEmpty)) {
+      payload['partyPhone'] = phone;
+    }
+
+    await Db.instance.updatePendingOpPayload(opId, payload);
+    await Db.instance.remapPendingCustomerId(
+      fromId: oldCustomerId,
+      toId: newCustomerId,
+    );
+    return true;
+  }
+
+  int? _readInt(Map<String, dynamic> payload, List<String> keys) {
+    for (final k in keys) {
+      final raw = payload[k];
+      if (raw is int) return raw;
+      if (raw is num) return raw.toInt();
+      final v = int.tryParse(raw?.toString() ?? '');
+      if (v != null) return v;
+    }
+    return null;
+  }
+
+  String _normPhone(String? s) => (s ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+  String _normName(String? s) => (s ?? '').trim().toLowerCase();
+
+  Future<int?> _findMatchingServerCustomerId({
+    required int businessId,
+    required String name,
+    String? phone,
+  }) async {
+    final rows = await Api.getCustomers(businessId: businessId);
+    final targetPhone = _normPhone(phone);
+    final targetName = _normName(name);
+    for (final r in rows) {
+      if (r is! Map) continue;
+      final m = Map<String, dynamic>.from(r);
+      final idRaw = m['id'];
+      final id =
+          idRaw is num ? idRaw.toInt() : int.tryParse(idRaw?.toString() ?? '');
+      if (id == null) continue;
+      final rowPhone = _normPhone(m['phone']?.toString());
+      final rowName = _normName(m['name']?.toString());
+      if (targetPhone.isNotEmpty &&
+          rowPhone.isNotEmpty &&
+          targetPhone == rowPhone) {
+        return id;
+      }
+      if (targetPhone.isEmpty &&
+          targetName.isNotEmpty &&
+          targetName == rowName) {
+        return id;
+      }
+    }
+    return null;
+  }
+
   Future<bool> _isOnline() async {
     try {
-      final result = await InternetAddress.lookup('eliteposs.com');
-      return result.isNotEmpty && result.first.rawAddress.isNotEmpty;
+      final uri = Uri.parse(Api.publicBaseUrl);
+      final res = await http.get(uri, headers: const {
+        'Accept': 'application/json'
+      }).timeout(const Duration(seconds: 5));
+      return res.statusCode >= 100;
     } catch (_) {
-      return false;
+      try {
+        final result = await InternetAddress.lookup('eliteposs.com');
+        return result.isNotEmpty && result.first.rawAddress.isNotEmpty;
+      } catch (_) {
+        return false;
+      }
     }
   }
 
@@ -394,5 +682,11 @@ class OfflineSyncService {
     return e is SocketException ||
         e is HandshakeException ||
         e is http.ClientException;
+  }
+
+  bool _isInvalidCustomerError(Object e) {
+    final s = e.toString().toLowerCase();
+    return s.contains('selected customer id is invalid') ||
+        s.contains('customer_id');
   }
 }

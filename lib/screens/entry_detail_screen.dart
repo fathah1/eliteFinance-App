@@ -1,10 +1,15 @@
+import 'dart:io';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../api.dart';
 
-class EntryDetailScreen extends StatelessWidget {
+class EntryDetailScreen extends StatefulWidget {
   final String title;
   final Map<String, dynamic> entry;
   final double runningBalance;
@@ -23,6 +28,14 @@ class EntryDetailScreen extends StatelessWidget {
     this.attachmentUrl,
     this.partyImageUrl,
   });
+
+  @override
+  State<EntryDetailScreen> createState() => _EntryDetailScreenState();
+}
+
+class _EntryDetailScreenState extends State<EntryDetailScreen> {
+  final GlobalKey _captureKey = GlobalKey();
+  final ScrollController _scrollController = ScrollController();
 
   double _asDouble(dynamic v) {
     if (v is num) return v.toDouble();
@@ -76,56 +89,65 @@ class EntryDetailScreen extends StatelessWidget {
   }
 
   Future<void> _shareEntry(BuildContext context) async {
-    final type = (entry['type'] ?? '').toString().toUpperCase();
-    final action = type == 'CREDIT' ? 'You gave' : 'You got';
-    final amount = _asDouble(entry['amount']).toStringAsFixed(0);
-    final balance = runningBalance.abs().toStringAsFixed(0);
-    final createdAt = _formatDate((entry['created_at'] ?? '').toString());
-    final note = (entry['note'] ?? '').toString().trim();
-
-    final message = StringBuffer()
-      ..writeln('$title')
-      ..writeln('$action AED $amount')
-      ..writeln('Running balance: AED $balance')
-      ..writeln('Date: $createdAt');
-    if (note.isNotEmpty) {
-      message.writeln('Note: $note');
+    final amount = _asDouble(widget.entry['amount']).toStringAsFixed(0);
+    try {
+      if (_scrollController.hasClients) {
+        _scrollController.jumpTo(0);
+        await Future.delayed(const Duration(milliseconds: 250));
+        await WidgetsBinding.instance.endOfFrame;
+      }
+      final boundary =
+          _captureKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      if (boundary == null) {
+        await Share.share('${widget.title}\nAED $amount');
+        return;
+      }
+      final image = await boundary.toImage(pixelRatio: 2.5);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      final bytes = byteData?.buffer.asUint8List();
+      if (bytes == null || bytes.isEmpty) {
+        await Share.share('${widget.title}\nAED $amount');
+        return;
+      }
+      final dir = await getTemporaryDirectory();
+      final file = File(
+        '${dir.path}/entry_${DateTime.now().millisecondsSinceEpoch}.png',
+      );
+      await file.writeAsBytes(bytes, flush: true);
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: '${widget.title}\nAED $amount',
+      );
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to share entry image.')),
+      );
     }
-
-    final resolvedAttachment = Api.resolveMediaUrl(
-      attachmentUrl ??
-          entry['attachment_url'] ??
-          entry['attachment_path'] ??
-          entry['attachment'],
-    );
-    if (resolvedAttachment != null && resolvedAttachment.isNotEmpty) {
-      message.writeln('Attachment: $resolvedAttachment');
-    }
-    await Share.share(message.toString());
   }
 
   @override
   Widget build(BuildContext context) {
     const brandBlue = Color(0xFF0B4F9E);
-    final amountValue = _asDouble(entry['amount']);
+    final amountValue = _asDouble(widget.entry['amount']);
     final amount = amountValue.toStringAsFixed(0);
-    final type = (entry['type'] ?? '').toString();
-    final date = _formatDate((entry['created_at'] ?? '').toString());
+    final type = (widget.entry['type'] ?? '').toString();
+    final date = _formatDate((widget.entry['created_at'] ?? '').toString());
     final amountColor = _amountColor(type);
-    final balanceColor = _balanceColor(runningBalance);
+    final balanceColor = _balanceColor(widget.runningBalance);
     final typeText = type == 'CREDIT' ? 'You gave' : 'You got';
     final resolvedAttachmentUrl = Api.resolveMediaUrl(
-      attachmentUrl ??
-          entry['attachment_url'] ??
-          entry['attachment_path'] ??
-          entry['attachment'],
+      widget.attachmentUrl ??
+          widget.entry['attachment_url'] ??
+          widget.entry['attachment_path'] ??
+          widget.entry['attachment'],
     );
     final resolvedPartyImage = Api.resolveMediaUrl(
-      partyImageUrl ??
-          entry['customer_photo_url'] ??
-          entry['supplier_photo_url'] ??
-          entry['party_photo_url'] ??
-          entry['photo_url'],
+      widget.partyImageUrl ??
+          widget.entry['customer_photo_url'] ??
+          widget.entry['supplier_photo_url'] ??
+          widget.entry['party_photo_url'] ??
+          widget.entry['photo_url'],
     );
 
     return Scaffold(
@@ -135,12 +157,16 @@ class EntryDetailScreen extends StatelessWidget {
         foregroundColor: Colors.white,
         title: const Text('Entry Details'),
       ),
-      body: Column(
+      body: RepaintBoundary(
+        child: Column(
         children: [
           Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(12),
-              child: Column(
+            child: RepaintBoundary(
+              key: _captureKey,
+              child: SingleChildScrollView(
+                controller: _scrollController,
+                padding: const EdgeInsets.all(12),
+                child: Column(
                 children: [
                   if (resolvedAttachmentUrl != null &&
                       resolvedAttachmentUrl.isNotEmpty)
@@ -221,9 +247,9 @@ class EntryDetailScreen extends StatelessWidget {
                                     : NetworkImage(resolvedPartyImage),
                                 child: resolvedPartyImage == null
                                     ? Text(
-                                        title.isNotEmpty
-                                            ? title[0].toUpperCase()
-                                            : 'A',
+                                  widget.title.isNotEmpty
+                                      ? widget.title[0].toUpperCase()
+                                      : 'A',
                                         style: const TextStyle(
                                           color: brandBlue,
                                           fontWeight: FontWeight.w700,
@@ -237,7 +263,7 @@ class EntryDetailScreen extends StatelessWidget {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      title,
+                                      widget.title,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(
@@ -279,7 +305,7 @@ class EntryDetailScreen extends StatelessWidget {
                             ],
                           ),
                           const Divider(height: 24),
-                          if ((entry['note'] ?? '').toString().trim().isNotEmpty)
+                          if ((widget.entry['note'] ?? '').toString().trim().isNotEmpty)
                             Container(
                               width: double.infinity,
                               margin: const EdgeInsets.only(bottom: 14),
@@ -302,7 +328,7 @@ class EntryDetailScreen extends StatelessWidget {
                                   ),
                                   const SizedBox(height: 6),
                                   Text(
-                                    (entry['note'] ?? '').toString(),
+                                    (widget.entry['note'] ?? '').toString(),
                                     style: const TextStyle(fontSize: 14),
                                   ),
                                 ],
@@ -319,7 +345,7 @@ class EntryDetailScreen extends StatelessWidget {
                                 ),
                               ),
                               Text(
-                                'AED ${runningBalance.abs().toStringAsFixed(0)}',
+                                'AED ${widget.runningBalance.abs().toStringAsFixed(0)}',
                                 style: TextStyle(
                                   fontSize: 26,
                                   fontWeight: FontWeight.w800,
@@ -332,7 +358,7 @@ class EntryDetailScreen extends StatelessWidget {
                           SizedBox(
                             width: double.infinity,
                             child: TextButton.icon(
-                              onPressed: onEdit,
+                              onPressed: widget.onEdit,
                               icon: const Icon(Icons.edit, color: brandBlue),
                               label: const Text(
                                 'EDIT ENTRY',
@@ -349,6 +375,7 @@ class EntryDetailScreen extends StatelessWidget {
                     ),
                   ),
                 ],
+                ),
               ),
             ),
           ),
@@ -359,7 +386,7 @@ class EntryDetailScreen extends StatelessWidget {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: onDelete,
+                    onPressed: widget.onDelete,
                     icon: const Icon(Icons.delete_outline, color: Colors.red),
                     label: const Text(
                       'DELETE',
@@ -394,6 +421,7 @@ class EntryDetailScreen extends StatelessWidget {
             ),
           ),
         ],
+        ),
       ),
     );
   }

@@ -483,6 +483,7 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> {
 
     final data = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),

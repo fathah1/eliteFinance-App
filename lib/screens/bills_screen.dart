@@ -101,6 +101,19 @@ class _BillsScreenState extends State<BillsScreen> {
     return maxNo + 1;
   }
 
+  double _billTotal(Map<String, dynamic> m) {
+    final total = _toDouble(m['total_amount']);
+    if (total > 0) return total;
+    final manual = _toDouble(m['manual_amount']);
+    if (manual > 0) return manual;
+    return _toDouble(m['amount']);
+  }
+
+  int _safeBillNo(Map<String, dynamic> m, String key) {
+    final n = _toInt(m[key]);
+    return n > 0 ? n : 1;
+  }
+
   Future<void> _loadAll() async {
     final prefs = await SharedPreferences.getInstance();
     final businessId = prefs.getInt('active_business_server_id');
@@ -162,13 +175,13 @@ class _BillsScreenState extends State<BillsScreen> {
       for (final raw in sales) {
         final m = Map<String, dynamic>.from(raw as Map);
         final id = _toInt(m['id']);
-        final number = _toInt(m['bill_number']);
+        final number = _safeBillNo(m, 'bill_number');
         final date =
             DateTime.tryParse((m['date'] ?? '').toString()) ?? DateTime.now();
         final party = ((m['party_name'] ?? '').toString().trim().isEmpty)
             ? 'Walk-in Sale'
             : (m['party_name'] ?? '').toString();
-        final total = _toDouble(m['total_amount']);
+        final total = _billTotal(m);
         final mode = (m['payment_mode'] ?? 'unpaid').toString();
         final unpaid = mode == 'unpaid';
 
@@ -192,13 +205,13 @@ class _BillsScreenState extends State<BillsScreen> {
       for (final raw in purchases) {
         final m = Map<String, dynamic>.from(raw as Map);
         final id = _toInt(m['id']);
-        final number = _toInt(m['purchase_number']);
+        final number = _safeBillNo(m, 'purchase_number');
         final date =
             DateTime.tryParse((m['date'] ?? '').toString()) ?? DateTime.now();
         final party = ((m['party_name'] ?? '').toString().trim().isEmpty)
             ? 'Walk-in Purchase'
             : (m['party_name'] ?? '').toString();
-        final total = _toDouble(m['total_amount']);
+        final total = _billTotal(m);
         final mode = (m['payment_mode'] ?? 'unpaid').toString();
         final unpaid = mode == 'unpaid';
 
@@ -222,7 +235,7 @@ class _BillsScreenState extends State<BillsScreen> {
       for (final raw in expenses) {
         final m = Map<String, dynamic>.from(raw as Map);
         final id = _toInt(m['id']);
-        final number = _toInt(m['expense_number']);
+        final number = _safeBillNo(m, 'expense_number');
         final date =
             DateTime.tryParse((m['date'] ?? '').toString()) ?? DateTime.now();
         final amount = _toDouble(m['amount']);
@@ -386,8 +399,16 @@ class _BillsScreenState extends State<BillsScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _loading = false);
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Could not refresh bills: $e')));
+      final msg = e.toString();
+      final isNetwork = msg.contains('SocketException') ||
+          msg.contains('Failed host lookup') ||
+          msg.contains('Connection refused') ||
+          msg.contains('ClientException');
+      if (!isNetwork) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not refresh bills: $e')),
+        );
+      }
     }
   }
 

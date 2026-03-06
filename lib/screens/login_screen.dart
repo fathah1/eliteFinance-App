@@ -19,6 +19,15 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _loading = false;
   String? _error;
 
+  bool _isNetworkError(Object e) {
+    final s = e.toString().toLowerCase();
+    return s.contains('socketexception') ||
+        s.contains('failed host lookup') ||
+        s.contains('connection refused') ||
+        s.contains('clientexception') ||
+        s.contains('handshakeexception');
+  }
+
   List<int> _businessIdsFrom(dynamic raw) {
     if (raw is! List) return const [];
     return raw.map((e) => int.tryParse(e.toString())).whereType<int>().toList();
@@ -29,6 +38,7 @@ class _LoginScreenState extends State<LoginScreen> {
   ) async {
     return showModalBottomSheet<Map<String, dynamic>>(
       context: context,
+      useSafeArea: true,
       isDismissible: false,
       enableDrag: false,
       shape: const RoundedRectangleBorder(
@@ -134,6 +144,35 @@ class _LoginScreenState extends State<LoginScreen> {
     return true;
   }
 
+  Future<void> _prefetchAllowedBusinesses(
+      Map<String, dynamic> loginData) async {
+    try {
+      final user = await Api.getUser();
+      final isSuper = AccessControl.isSuperUser(user);
+      final allBusinesses =
+          (await Api.getBusinesses()).cast<Map<String, dynamic>>();
+      final allowedIds = _businessIdsFrom(
+        loginData['business_ids'] ?? user?['business_ids'],
+      );
+
+      var available = allBusinesses;
+      if (!isSuper && allowedIds.isNotEmpty) {
+        available = allBusinesses.where((b) {
+          final id = int.tryParse((b['id'] ?? '').toString());
+          return id != null && allowedIds.contains(id);
+        }).toList();
+      }
+
+      for (final b in available) {
+        final id = int.tryParse((b['id'] ?? '').toString());
+        if (id == null || id <= 0) continue;
+        await Api.prefetchBusinessData(businessId: id);
+      }
+    } catch (_) {
+      // Best-effort warmup only.
+    }
+  }
+
   Future<void> _login() async {
     if (_usernameController.text.isEmpty) {
       setState(() {
@@ -147,20 +186,44 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = null;
     });
 
+    final username = _usernameController.text.trim();
+    final password = _passwordController.text;
     try {
       final data = await Api.login(
-        username: _usernameController.text.trim(),
-        password: _passwordController.text,
+        username: username,
+        password: password,
       );
 
       if (data['user'] is Map<String, dynamic>) {
-        await Db.instance.upsertUser(data['user'] as Map<String, dynamic>);
+        final user =
+            Map<String, dynamic>.from(data['user'] as Map<String, dynamic>);
+        if (data['permissions'] is Map<String, dynamic>) {
+          user['permissions'] = data['permissions'];
+        }
+        if (data['business_ids'] is List) {
+          user['business_ids'] = data['business_ids'];
+        }
+        await Db.instance.upsertUser(user);
+        await Api.saveOfflineLoginCredential(
+          username: username,
+          user: user,
+          password: password,
+          salt: (((data['offline_auth'] as Map?)?['salt']) ??
+                  user['offline_auth_salt'])
+              ?.toString(),
+          version: int.tryParse((((data['offline_auth'] as Map?)?['version']) ??
+                      user['offline_auth_version'] ??
+                      1)
+                  .toString()) ??
+              1,
+        );
       }
       final businessResolved = await _resolveActiveBusiness(data);
       if (!businessResolved) {
         setState(() => _loading = false);
         return;
       }
+      await _prefetchAllowedBusinesses(data);
 
       if (!mounted) return;
       Navigator.pushAndRemoveUntil(
@@ -171,9 +234,83 @@ class _LoginScreenState extends State<LoginScreen> {
         (route) => false,
       );
     } catch (e) {
-      setState(() {
-        _error = e.toString();
-      });
+      if (_isNetworkError(e)) {
+        final saved = await Api.getOfflineLoginCredential(username);
+        final savedVerifier = (saved?['verifier'] ?? '').toString().trim();
+        final savedSalt = (saved?['salt'] ?? '').toString().trim();
+        final savedPassword = (saved?['password'] ?? '').toString();
+        final verifierMatched = saved != null &&
+            savedVerifier.isNotEmpty &&
+            savedSalt.isNotEmpty &&
+            Api.computeOfflineAuthVerifier(
+                  username: username,
+                  password: password,
+                  salt: savedSalt,
+                ) ==
+                savedVerifier;
+        final legacyMatched = saved != null &&
+            !verifierMatched &&
+            savedPassword.isNotEmpty &&
+            savedPassword == password;
+        if (verifierMatched || legacyMatched) {
+          final userRaw = saved['user'];
+          Map<String, dynamic>? user;
+          if (userRaw is Map<String, dynamic>) {
+            user = Map<String, dynamic>.from(userRaw);
+          } else if (userRaw is Map) {
+            user = Map<String, dynamic>.from(userRaw);
+          }
+          if (user != null) {
+            await Api.saveUser(user);
+            await Db.instance.upsertUser(user);
+            if (legacyMatched && savedSalt.isNotEmpty) {
+              await Api.saveOfflineLoginCredential(
+                username: username,
+                user: user,
+                verifier: Api.computeOfflineAuthVerifier(
+                  username: username,
+                  password: password,
+                  salt: savedSalt,
+                ),
+                salt: savedSalt,
+                version: int.tryParse((saved['version'] ?? 1).toString()) ?? 1,
+              );
+            }
+            final businessResolved = await _resolveActiveBusiness({
+              'business_ids': user['business_ids'],
+            });
+            if (!businessResolved) {
+              if (mounted) setState(() => _loading = false);
+              return;
+            }
+            await _prefetchAllowedBusinesses({
+              'business_ids': user['business_ids'],
+            });
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('No internet. Logged in using offline data.'),
+              ),
+            );
+            Navigator.pushAndRemoveUntil(
+              context,
+              AppRoutes.onGenerateRoute(
+                const RouteSettings(name: AppRoutes.home),
+              ),
+              (route) => false,
+            );
+            return;
+          }
+        }
+        setState(() {
+          _error =
+              'No internet and no offline login found for this user on this device.';
+        });
+      } else {
+        setState(() {
+          _error = e.toString();
+        });
+      }
     } finally {
       setState(() {
         _loading = false;

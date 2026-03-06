@@ -58,7 +58,8 @@ class _VatReportScreenState extends State<VatReportScreen> {
   bool _isWithinRange(DateTime d) {
     if (_startDate == null || _endDate == null) return false;
     final day = DateTime(d.year, d.month, d.day);
-    final start = DateTime(_startDate!.year, _startDate!.month, _startDate!.day);
+    final start =
+        DateTime(_startDate!.year, _startDate!.month, _startDate!.day);
     final end = DateTime(_endDate!.year, _endDate!.month, _endDate!.day);
     return !(day.isBefore(start) || day.isAfter(end));
   }
@@ -187,7 +188,9 @@ class _VatReportScreenState extends State<VatReportScreen> {
   String _money(double value) => 'AED ${value.toStringAsFixed(2)}';
 
   Future<void> _pickDate({required bool start}) async {
-    final initial = start ? (_startDate ?? DateTime.now()) : (_endDate ?? _startDate ?? DateTime.now());
+    final initial = start
+        ? (_startDate ?? DateTime.now())
+        : (_endDate ?? _startDate ?? DateTime.now());
     final picked = await showDatePicker(
       context: context,
       initialDate: initial,
@@ -218,9 +221,12 @@ class _VatReportScreenState extends State<VatReportScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(color: Color(0xFF6B7280), fontSize: 13)),
+          Text(label,
+              style: const TextStyle(color: Color(0xFF6B7280), fontSize: 13)),
           const SizedBox(height: 4),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 23 / 2)),
+          Text(value,
+              style: const TextStyle(
+                  fontWeight: FontWeight.w700, fontSize: 23 / 2)),
         ],
       ),
     );
@@ -257,7 +263,8 @@ class _VatReportScreenState extends State<VatReportScreen> {
                               ),
                             ),
                           ),
-                          const Icon(Icons.keyboard_arrow_down, color: _brandBlue),
+                          const Icon(Icons.keyboard_arrow_down,
+                              color: _brandBlue),
                         ],
                       ),
                     ),
@@ -270,14 +277,21 @@ class _VatReportScreenState extends State<VatReportScreen> {
                     child: _chip(
                       child: Row(
                         children: [
-                          const Icon(Icons.calendar_month_outlined, color: _brandBlue, size: 18),
+                          const Icon(Icons.calendar_month_outlined,
+                              color: _brandBlue, size: 18),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text('Start Date', style: TextStyle(fontSize: 12, color: Color(0xFF7A828F))),
-                                Text(_dateLabel(_startDate), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+                                const Text('Start Date',
+                                    style: TextStyle(
+                                        fontSize: 12,
+                                        color: Color(0xFF7A828F))),
+                                Text(_dateLabel(_startDate),
+                                    style: const TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w500)),
                               ],
                             ),
                           ),
@@ -293,14 +307,21 @@ class _VatReportScreenState extends State<VatReportScreen> {
                     child: _chip(
                       child: Row(
                         children: [
-                          const Icon(Icons.calendar_month_outlined, color: _brandBlue, size: 18),
+                          const Icon(Icons.calendar_month_outlined,
+                              color: _brandBlue, size: 18),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text('End Date', style: TextStyle(fontSize: 12, color: Color(0xFF7A828F))),
-                                Text(_dateLabel(_endDate), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+                                const Text('End Date',
+                                    style: TextStyle(
+                                        fontSize: 12,
+                                        color: Color(0xFF7A828F))),
+                                Text(_dateLabel(_endDate),
+                                    style: const TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w500)),
                               ],
                             ),
                           ),
@@ -337,7 +358,8 @@ class _VatReportScreenState extends State<VatReportScreen> {
                     children: [
                       _metric('Expense VAT', _money(_expenseVat)),
                       const SizedBox(width: 10),
-                      _metric('Net VAT', _money(_salesVat - (_purchaseVat + _expenseVat))),
+                      _metric('Net VAT',
+                          _money(_salesVat - (_purchaseVat + _expenseVat))),
                     ],
                   ),
                 ],
@@ -362,6 +384,7 @@ class _VatReportScreenState extends State<VatReportScreen> {
   Future<void> _openDurationSheet() async {
     final selected = await showModalBottomSheet<_DurationFilter>(
       context: context,
+      useSafeArea: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),

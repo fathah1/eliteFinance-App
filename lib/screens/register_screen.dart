@@ -46,6 +46,31 @@ class _RegisterScreenState extends State<RegisterScreen> {
             : _phoneController.text.trim(),
       );
 
+      if (data['user'] is Map<String, dynamic>) {
+        final user =
+            Map<String, dynamic>.from(data['user'] as Map<String, dynamic>);
+        if (data['permissions'] is Map<String, dynamic>) {
+          user['permissions'] = data['permissions'];
+        }
+        if (data['business_ids'] is List) {
+          user['business_ids'] = data['business_ids'];
+        }
+        await Api.saveUser(user);
+        await Api.saveOfflineLoginCredential(
+          username: _usernameController.text.trim(),
+          user: user,
+          password: _passwordController.text,
+          salt: (((data['offline_auth'] as Map?)?['salt']) ??
+                  user['offline_auth_salt'])
+              ?.toString(),
+          version: int.tryParse((((data['offline_auth'] as Map?)?['version']) ??
+                      user['offline_auth_version'] ??
+                      1)
+                  .toString()) ??
+              1,
+        );
+      }
+
       if (data['business'] is Map<String, dynamic>) {
         final b = data['business'] as Map<String, dynamic>;
         final prefs = await SharedPreferences.getInstance();

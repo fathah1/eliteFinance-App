@@ -1,5 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../api.dart';
+import '../offline_sync_service.dart';
 import '../routes.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -21,6 +25,7 @@ class _SplashScreenState extends State<SplashScreen> {
 
     if (!mounted) return;
     if (token != null && token.isNotEmpty) {
+      unawaited(_warmUpOfflineCache());
       Navigator.pushAndRemoveUntil(
         context,
         AppRoutes.onGenerateRoute(
@@ -36,6 +41,26 @@ class _SplashScreenState extends State<SplashScreen> {
         ),
         (route) => false,
       );
+    }
+  }
+
+  Future<void> _warmUpOfflineCache() async {
+    try {
+      await OfflineSyncService.instance.syncPendingNow();
+      final prefs = await SharedPreferences.getInstance();
+      final activeBusinessId = prefs.getInt('active_business_server_id');
+      if (activeBusinessId != null) {
+        await Api.prefetchBusinessData(businessId: activeBusinessId);
+      }
+      final businesses = await Api.getBusinesses();
+      for (final b in businesses) {
+        final id = (b as Map)['id'];
+        if (id is int && id != activeBusinessId) {
+          await Api.prefetchBusinessData(businessId: id);
+        }
+      }
+    } catch (_) {
+      // best effort only
     }
   }
 

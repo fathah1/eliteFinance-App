@@ -115,6 +115,7 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
     DateTime? selected = _dueDate;
     showModalBottomSheet(
       context: context,
+      useSafeArea: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -340,8 +341,8 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
     return '$contact has requested a payment of AED $amountLabel.';
   }
 
-  ImageProvider? _partyAvatarProvider() {
-    final url = Api.resolveMediaUrl(
+  String? _partyAvatarUrl() {
+    return Api.resolveMediaUrl(
       widget.customer['photo_url'] ??
           widget.customer['photoPath'] ??
           widget.customer['photo_path'] ??
@@ -349,8 +350,60 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
           widget.customer['image_url'] ??
           widget.customer['avatar_url'],
     );
+  }
+
+  ImageProvider? _partyAvatarProvider() {
+    final url = _partyAvatarUrl();
     if (url == null) return null;
     return NetworkImage(url);
+  }
+
+  Future<void> _showAvatarPreview() async {
+    final url = _partyAvatarUrl();
+    if (url == null) return;
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(20),
+        child: Stack(
+          children: [
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.black,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: AspectRatio(
+                aspectRatio: 1,
+                child: InteractiveViewer(
+                  minScale: 1,
+                  maxScale: 4,
+                  child: Image.network(
+                    url,
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Material(
+                color: Colors.black54,
+                shape: const CircleBorder(),
+                child: IconButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  icon: const Icon(Icons.close, color: Colors.white),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildRequestCard(
@@ -502,9 +555,10 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
     }
   }
 
-  String _reportPeriodLabel() {
-    if (_transactions.isEmpty) return DateFormat('dd MMM yyyy').format(DateTime.now());
-    final dates = _transactions
+  String _reportPeriodLabel(List<Map<String, dynamic>> entries) {
+    if (entries.isEmpty)
+      return DateFormat('dd MMM yyyy').format(DateTime.now());
+    final dates = entries
         .map((t) => DateTime.tryParse((t['created_at'] ?? '').toString()))
         .whereType<DateTime>()
         .toList();
@@ -515,6 +569,131 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
     return '$start - $end';
   }
 
+  List<Map<String, dynamic>> _allEntriesAsc() {
+    final entriesAsc = _transactions.reversed.toList();
+    return entriesAsc;
+  }
+
+  List<Map<String, dynamic>> _filterEntriesByDateRange({
+    required DateTime start,
+    required DateTime end,
+  }) {
+    final s = DateTime(start.year, start.month, start.day);
+    final e = DateTime(end.year, end.month, end.day, 23, 59, 59, 999);
+    return _allEntriesAsc().where((t) {
+      final dt = DateTime.tryParse((t['created_at'] ?? '').toString());
+      if (dt == null) return false;
+      return !dt.isBefore(s) && !dt.isAfter(e);
+    }).toList();
+  }
+
+  Future<List<Map<String, dynamic>>?> _pickReportEntries() async {
+    final option = await showModalBottomSheet<String>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.of(ctx).size.height * 0.7,
+          child: Column(
+            children: [
+              const ListTile(
+                title: Text(
+                  'Select report duration',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              Expanded(
+                child: ListView(
+                  children: [
+                    ListTile(
+                        title: const Text('All'),
+                        onTap: () => Navigator.pop(ctx, 'all')),
+                    ListTile(
+                        title: const Text('This Month'),
+                        onTap: () => Navigator.pop(ctx, 'this_month')),
+                    ListTile(
+                        title: const Text('Last Month'),
+                        onTap: () => Navigator.pop(ctx, 'last_month')),
+                    ListTile(
+                        title: const Text('This Week'),
+                        onTap: () => Navigator.pop(ctx, 'this_week')),
+                    ListTile(
+                        title: const Text('Today'),
+                        onTap: () => Navigator.pop(ctx, 'today')),
+                    ListTile(
+                        title: const Text('Yesterday'),
+                        onTap: () => Navigator.pop(ctx, 'yesterday')),
+                    ListTile(
+                        title: const Text('Single Day'),
+                        onTap: () => Navigator.pop(ctx, 'single_day')),
+                    ListTile(
+                        title: const Text('Date Range'),
+                        onTap: () => Navigator.pop(ctx, 'date_range')),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (option == null) return null;
+
+    final now = DateTime.now();
+    if (option == 'all') return _allEntriesAsc();
+    if (option == 'today') {
+      return _filterEntriesByDateRange(start: now, end: now);
+    }
+    if (option == 'yesterday') {
+      final y = now.subtract(const Duration(days: 1));
+      return _filterEntriesByDateRange(start: y, end: y);
+    }
+    if (option == 'this_week') {
+      final start = now.subtract(Duration(days: now.weekday - 1));
+      return _filterEntriesByDateRange(start: start, end: now);
+    }
+    if (option == 'this_month') {
+      final start = DateTime(now.year, now.month, 1);
+      final end = DateTime(now.year, now.month + 1, 0);
+      return _filterEntriesByDateRange(start: start, end: end);
+    }
+    if (option == 'last_month') {
+      final start = DateTime(now.year, now.month - 1, 1);
+      final end = DateTime(now.year, now.month, 0);
+      return _filterEntriesByDateRange(start: start, end: end);
+    }
+    if (option == 'single_day') {
+      final day = await showDatePicker(
+        context: context,
+        initialDate: now,
+        firstDate: DateTime(2020),
+        lastDate: DateTime(2100),
+      );
+      if (day == null) return null;
+      return _filterEntriesByDateRange(start: day, end: day);
+    }
+    if (option == 'date_range') {
+      final start = await showDatePicker(
+        context: context,
+        initialDate: now,
+        firstDate: DateTime(2020),
+        lastDate: DateTime(2100),
+      );
+      if (start == null) return null;
+      final end = await showDatePicker(
+        context: context,
+        initialDate: start,
+        firstDate: start,
+        lastDate: DateTime(2100),
+      );
+      if (end == null) return null;
+      return _filterEntriesByDateRange(start: start, end: end);
+    }
+    return _allEntriesAsc();
+  }
+
   String _sanitizePhoneForWhatsApp(String raw) {
     final keepPlus = raw.trim().startsWith('+');
     final digits = raw.replaceAll(RegExp(r'[^0-9]'), '');
@@ -522,11 +701,12 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
     return keepPlus ? '+$digits' : digits;
   }
 
-  Future<File> _buildCustomerReportPdf() async {
+  Future<File> _buildCustomerReportPdf({
+    required List<Map<String, dynamic>> entriesAsc,
+  }) async {
     final customerName = (widget.customer['name'] ?? 'Customer').toString();
     final customerPhone = (widget.customer['phone'] ?? '').toString();
     final now = DateTime.now();
-    final entriesAsc = _transactions.reversed.toList();
     final totalCredit = entriesAsc
         .where((t) => (t['type'] ?? '').toString().toUpperCase() == 'CREDIT')
         .fold<double>(0, (sum, t) => sum + _asDouble(t['amount']));
@@ -553,8 +733,9 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
           pw.SizedBox(height: 10),
           pw.Text('Customer: $customerName'),
           if (customerPhone.trim().isNotEmpty) pw.Text('Phone: $customerPhone'),
-          pw.Text('Period: ${_reportPeriodLabel()}'),
-          pw.Text('Generated: ${DateFormat('dd MMM yyyy hh:mm a').format(now)}'),
+          pw.Text('Period: ${_reportPeriodLabel(entriesAsc)}'),
+          pw.Text(
+              'Generated: ${DateFormat('dd MMM yyyy hh:mm a').format(now)}'),
           pw.SizedBox(height: 14),
           pw.Container(
             padding: const pw.EdgeInsets.all(10),
@@ -596,9 +777,11 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
             headers: const ['Date', 'Note', 'Type', 'Amount', 'Balance'],
             data: entriesAsc.map((t) {
               final type = (t['type'] ?? '').toString().toUpperCase();
-              final date = DateTime.tryParse((t['created_at'] ?? '').toString());
-              final dateLabel =
-                  date == null ? '-' : DateFormat('dd MMM yy, hh:mm a').format(date);
+              final date =
+                  DateTime.tryParse((t['created_at'] ?? '').toString());
+              final dateLabel = date == null
+                  ? '-'
+                  : DateFormat('dd MMM yy, hh:mm a').format(date);
               return [
                 dateLabel,
                 (t['note'] ?? '').toString(),
@@ -622,7 +805,17 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
 
   Future<void> _downloadCustomerReportPdf() async {
     try {
-      final file = await _buildCustomerReportPdf();
+      final entriesAsc = await _pickReportEntries();
+      if (entriesAsc == null) return;
+      if (entriesAsc.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('No entries found for selected duration')),
+        );
+        return;
+      }
+      final file = await _buildCustomerReportPdf(entriesAsc: entriesAsc);
       if (!mounted) return;
       await showDialog<void>(
         context: context,
@@ -660,7 +853,7 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
 
   Future<void> _sendReportOnWhatsApp() async {
     try {
-      final file = await _buildCustomerReportPdf();
+      final file = await _buildCustomerReportPdf(entriesAsc: _allEntriesAsc());
       final number = _sanitizePhoneForWhatsApp(
         (widget.customer['phone'] ?? '').toString(),
       );
@@ -734,6 +927,7 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
 
     await showModalBottomSheet<void>(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) {
@@ -965,6 +1159,7 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
 
     await showModalBottomSheet<void>(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) {
@@ -1221,15 +1416,19 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
         foregroundColor: Colors.white,
         title: Row(
           children: [
-            CircleAvatar(
-              backgroundColor: Colors.white,
-              backgroundImage: avatar,
-              child: avatar == null
-                  ? Text(
-                      name.isNotEmpty ? name[0].toUpperCase() : 'A',
-                      style: const TextStyle(color: brandBlue),
-                    )
-                  : null,
+            InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: _showAvatarPreview,
+              child: CircleAvatar(
+                backgroundColor: Colors.white,
+                backgroundImage: avatar,
+                child: avatar == null
+                    ? Text(
+                        name.isNotEmpty ? name[0].toUpperCase() : 'A',
+                        style: const TextStyle(color: brandBlue),
+                      )
+                    : null,
+              ),
             ),
             const SizedBox(width: 12),
             Column(
