@@ -13,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../access_control.dart';
 import '../api.dart';
+import '../app_events.dart';
 import '../routes.dart';
 import '../widgets/app_brand_logo.dart';
 import '../widgets/sync_status_chip.dart';
@@ -28,6 +29,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> _items = [];
   List<Map<String, dynamic>> _filtered = [];
   bool _loading = true;
+  bool _isFetching = false;
   String _query = '';
   int? _activeBusinessServerId;
   String _activeBusinessName = 'Business';
@@ -41,6 +43,18 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _init();
+    AppEvents.partiesRefreshTick.addListener(_handleExternalRefresh);
+  }
+
+  void _handleExternalRefresh() {
+    if (!mounted) return;
+    _loadData();
+  }
+
+  @override
+  void dispose() {
+    AppEvents.partiesRefreshTick.removeListener(_handleExternalRefresh);
+    super.dispose();
   }
 
   Future<void> _init() async {
@@ -83,6 +97,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadData() async {
+    if (_isFetching) return;
+    _isFetching = true;
     if (_activeBusinessServerId == null) {
       setState(() {
         _items = [];
@@ -91,6 +107,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _giveTotal = 0;
         _getTotal = 0;
       });
+      _isFetching = false;
       return;
     }
 
@@ -107,7 +124,24 @@ class _HomeScreenState extends State<HomeScreen> {
         final transactions = await Api.getAllTransactions(
           businessId: _activeBusinessServerId!,
         );
-        _buildListFromTransactions(customers, transactions);
+        final sales = await Api.getSales(
+          businessId: _activeBusinessServerId!,
+        );
+        final saleLatest = <int, DateTime>{};
+        for (final s in sales) {
+          final m = Map<String, dynamic>.from(s as Map);
+          final cid = m['customer_id'];
+          if (cid == null) continue;
+          final dt = DateTime.tryParse(
+            (m['created_at'] ?? m['updated_at'] ?? '').toString(),
+          );
+          if (dt == null) continue;
+          final id = cid as int;
+          final prev = saleLatest[id];
+          if (prev == null || dt.isAfter(prev)) saleLatest[id] = dt;
+        }
+        _buildListFromTransactions(customers, transactions,
+            extraLatest: saleLatest);
       } else {
         final suppliers = await Api.getSuppliers(
           businessId: _activeBusinessServerId!,
@@ -115,7 +149,24 @@ class _HomeScreenState extends State<HomeScreen> {
         final transactions = await Api.getAllSupplierTransactions(
           businessId: _activeBusinessServerId!,
         );
-        _buildListFromTransactions(suppliers, transactions);
+        final purchases = await Api.getPurchases(
+          businessId: _activeBusinessServerId!,
+        );
+        final purchaseLatest = <int, DateTime>{};
+        for (final p in purchases) {
+          final m = Map<String, dynamic>.from(p as Map);
+          final sid = m['supplier_id'];
+          if (sid == null) continue;
+          final dt = DateTime.tryParse(
+            (m['created_at'] ?? m['updated_at'] ?? '').toString(),
+          );
+          if (dt == null) continue;
+          final id = sid as int;
+          final prev = purchaseLatest[id];
+          if (prev == null || dt.isAfter(prev)) purchaseLatest[id] = dt;
+        }
+        _buildListFromTransactions(suppliers, transactions,
+            extraLatest: purchaseLatest);
       }
 
       if (!mounted) return;
@@ -133,6 +184,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _getTotal = 0;
       });
     }
+    _isFetching = false;
   }
 
   Future<void> _loadDueDates() async {
@@ -170,8 +222,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _buildListFromTransactions(
     List<dynamic> entities,
-    List<dynamic> transactions,
-  ) {
+    List<dynamic> transactions, {
+    Map<int, DateTime>? extraLatest,
+  }) {
     final totals = <int, Map<String, double>>{};
     final latest = <int, DateTime>{};
     double creditTotal = 0;
@@ -208,7 +261,14 @@ class _HomeScreenState extends State<HomeScreen> {
       final credit = totals[id]?['credit'] ?? 0;
       final debit = totals[id]?['debit'] ?? 0;
       final balance = opening + credit - debit;
-      final last = latest[id];
+      final fromTx = latest[id];
+      final fromExtra = extraLatest?[id];
+      DateTime? last;
+      if (fromTx != null && fromExtra != null) {
+        last = fromTx.isAfter(fromExtra) ? fromTx : fromExtra;
+      } else {
+        last = fromTx ?? fromExtra;
+      }
       if (balance > 0) {
         sumPositive += balance;
       } else if (balance < 0) {
@@ -630,10 +690,6 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: _openBusinesses,
           ),
           IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadData,
-          ),
-          IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () {
               Navigator.push(
@@ -850,12 +906,14 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: Text('Select a business to continue.'))
                     : _filtered.isEmpty
                         ? const Center(child: Text('No entries yet.'))
-                        : ListView.separated(
-                            padding: const EdgeInsets.only(bottom: 120),
-                            itemCount: _filtered.length,
-                            separatorBuilder: (_, __) =>
-                                const Divider(height: 1),
-                            itemBuilder: (context, index) {
+                        : RefreshIndicator(
+                            onRefresh: _loadData,
+                            child: ListView.separated(
+                              padding: const EdgeInsets.only(bottom: 120),
+                              itemCount: _filtered.length,
+                              separatorBuilder: (_, __) =>
+                                  const Divider(height: 1),
+                              itemBuilder: (context, index) {
                               final c = _filtered[index];
                               final balance = _asDouble(c['balance']);
                               final id = c['id'] as int?;
@@ -971,7 +1029,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                   ).then((_) => _loadData());
                                 },
                               );
-                            },
+                              },
+                            ),
                           ),
           ),
         ],

@@ -47,14 +47,30 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
   }
 
   String _formatDate(String raw) {
-    final dt = DateTime.tryParse(raw);
+    final hasTime = raw.contains('T') || raw.contains(':');
+    final dt = DateTime.tryParse(raw)?.toLocal();
     if (dt == null) return raw;
+    final isMidnight =
+        dt.hour == 0 && dt.minute == 0 && dt.second == 0 && hasTime;
     final y = dt.year.toString().padLeft(4, '0');
     final m = dt.month.toString().padLeft(2, '0');
     final d = dt.day.toString().padLeft(2, '0');
-    final h = dt.hour.toString().padLeft(2, '0');
+    if (isMidnight) {
+      return '$d $m $y';
+    }
+    final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
     final min = dt.minute.toString().padLeft(2, '0');
-    return '$d $m $y • $h:$min';
+    final suffix = dt.hour >= 12 ? 'PM' : 'AM';
+    return '$d $m $y • $h:$min $suffix';
+  }
+
+  String? _txnTag(Map<String, dynamic> t) {
+    final note = (t['note'] ?? '').toString().toLowerCase();
+    if (note.startsWith('payment out #')) return 'Payment Out';
+    if (note.startsWith('purchase #')) return 'Purchase';
+    if (note.startsWith('purchase return #')) return 'Purchase Return';
+    if (note.startsWith('cashbook out')) return 'Cashbook Out';
+    return null;
   }
 
   Future<void> _load() async {
@@ -1126,10 +1142,9 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
                             Container(
                               padding: const EdgeInsets.all(10),
                               decoration: BoxDecoration(
-                                color: isGave
-                                    ? const Color(0xFFFDEDED)
-                                    : const Color(0xFFE9F7EF),
+                                color: Colors.white,
                                 borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: Colors.black12),
                               ),
                               child: Icon(
                                 isGave
@@ -1328,6 +1343,9 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
             padding: const EdgeInsets.all(12),
             child: Card(
               elevation: 0,
+              color: Colors.white,
+              surfaceTintColor: Colors.white,
+              shadowColor: Colors.transparent,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -1439,6 +1457,10 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
                           final amount = _asDouble(t['amount']);
                           final type = (t['type'] ?? '').toString();
                           final running = _asDouble(t['running_balance']);
+                          final createdRaw =
+                              (t['created_at'] ?? t['updated_at'] ?? t['date'] ?? '')
+                                  .toString();
+                          final tag = _txnTag(t);
                           return InkWell(
                             onTap: () {
                               final attachment =
@@ -1490,70 +1512,120 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
                               );
                             },
                             child: Card(
-                              elevation: 0,
+                              color: Colors.white,
+                              elevation: 1,
+                              shadowColor: Colors.black12,
+                              margin: const EdgeInsets.only(bottom: 10),
+                              clipBehavior: Clip.antiAlias,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
                               ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(12),
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(_formatDate(
-                                              t['created_at'] as String)),
-                                          const SizedBox(height: 6),
-                                          Text(
-                                              'Bal. AED ${running.toStringAsFixed(0)}'),
-                                        ],
+                              child: IntrinsicHeight(
+                                child: ConstrainedBox(
+                                  constraints:
+                                      const BoxConstraints(minHeight: 72),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      Expanded(
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(8),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                _formatDate(createdRaw),
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.black54,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 6),
+                                              Text(
+                                                'Bal. AED ${running.toStringAsFixed(0)}',
+                                                style: const TextStyle(
+                                                    fontSize: 12),
+                                              ),
+                                              if (tag != null) ...[
+                                                const SizedBox(height: 6),
+                                                Container(
+                                                  padding: const EdgeInsets
+                                                      .symmetric(
+                                                      horizontal: 8,
+                                                      vertical: 2),
+                                                  decoration: BoxDecoration(
+                                                    color: const Color(
+                                                        0xFFF3F4F6),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            10),
+                                                  ),
+                                                  child: Text(
+                                                    tag,
+                                                    style: const TextStyle(
+                                                      fontSize: 10,
+                                                      color: Colors.black54,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ],
+                                          ),
+                                        ),
                                       ),
-                                    ),
-                                  ),
-                                  Container(
-                                    width: 90,
-                                    color: type == 'CREDIT'
-                                        ? const Color(0xFFFDEDED)
-                                        : Colors.transparent,
-                                    padding: const EdgeInsets.all(12),
-                                    child: Text(
-                                      type == 'CREDIT'
-                                          ? 'AED ${amount.toStringAsFixed(0)}'
-                                          : '',
-                                      textAlign: TextAlign.center,
-                                      style: const TextStyle(
-                                        color: Colors.red,
-                                        fontWeight: FontWeight.bold,
+                                      Container(
+                                        width: 76,
+                                        color: type == 'CREDIT'
+                                            ? const Color(0xFFFDEDED)
+                                            : Colors.transparent,
+                                        alignment: Alignment.center,
+                                        padding: const EdgeInsets.all(8),
+                                        child: Text(
+                                          type == 'CREDIT'
+                                              ? 'AED ${amount.toStringAsFixed(0)}'
+                                              : '',
+                                          textAlign: TextAlign.center,
+                                          style: const TextStyle(
+                                            color: Colors.red,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 14,
+                                          ),
+                                        ),
                                       ),
-                                    ),
-                                  ),
-                                  Container(
-                                    width: 90,
-                                    color: type == 'DEBIT'
-                                        ? const Color(0xFFE9F7EF)
-                                        : Colors.transparent,
-                                    padding: const EdgeInsets.all(12),
-                                    child: Text(
-                                      type == 'DEBIT'
-                                          ? 'AED ${amount.toStringAsFixed(0)}'
-                                          : '',
-                                      textAlign: TextAlign.center,
-                                      style: const TextStyle(
-                                        color: Colors.green,
-                                        fontWeight: FontWeight.bold,
+                                      Container(
+                                        width: 76,
+                                        color: type == 'DEBIT'
+                                            ? const Color(0xFFE9F7EF)
+                                            : Colors.transparent,
+                                        alignment: Alignment.center,
+                                        padding: const EdgeInsets.all(8),
+                                        child: Text(
+                                          type == 'DEBIT'
+                                              ? 'AED ${amount.toStringAsFixed(0)}'
+                                              : '',
+                                          textAlign: TextAlign.center,
+                                          style: const TextStyle(
+                                            color: Colors.green,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 14,
+                                          ),
+                                        ),
                                       ),
-                                    ),
+                                      if ((t['attachment_path'] ?? '')
+                                          .toString()
+                                          .isNotEmpty)
+                                        const Padding(
+                                          padding: EdgeInsets.only(right: 8),
+                                          child: Icon(Icons.attachment,
+                                              size: 16),
+                                        ),
+                                    ],
                                   ),
-                                  if ((t['attachment_path'] ?? '')
-                                      .toString()
-                                      .isNotEmpty)
-                                    const Padding(
-                                      padding: EdgeInsets.only(right: 8),
-                                      child: Icon(Icons.attachment, size: 16),
-                                    ),
-                                ],
+                                ),
                               ),
                             ),
                           );

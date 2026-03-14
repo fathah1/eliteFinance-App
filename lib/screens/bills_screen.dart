@@ -3,13 +3,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../access_control.dart';
 import '../api.dart';
+import '../app_events.dart';
 import 'add_expense_screen.dart';
 import 'add_bill_payment_screen.dart';
 import 'add_bill_return_screen.dart';
 import 'add_purchase_screen.dart';
 import 'add_sale_bill_screen.dart';
+import 'bill_detail_screen.dart';
 import 'cashbook_screen.dart';
 import 'expense_detail_screen.dart';
+import 'payment_detail_screen.dart';
 import '../routes.dart';
 import '../widgets/app_brand_logo.dart';
 import '../widgets/sync_status_chip.dart';
@@ -22,6 +25,8 @@ class _BillEntry {
     required this.label,
     required this.billNumber,
     required this.date,
+    required this.sortDate,
+    required this.sortId,
     required this.amount,
     required this.paymentMode,
     required this.paymentStatusLabel,
@@ -35,6 +40,8 @@ class _BillEntry {
   final String label;
   final int billNumber;
   final DateTime date;
+  final DateTime sortDate;
+  final int sortId;
   final double amount;
   final String paymentMode;
   final String paymentStatusLabel;
@@ -50,6 +57,7 @@ class BillsScreen extends StatefulWidget {
 }
 
 class _BillsScreenState extends State<BillsScreen> {
+  int? _activeBusinessId;
   String _tab = 'sale';
   String _query = '';
   String _businessName = 'Business';
@@ -82,6 +90,33 @@ class _BillsScreenState extends State<BillsScreen> {
     return double.tryParse(value.toString()) ?? fallback;
   }
 
+  DateTime _serverSortDate({
+    required String? createdAt,
+    required String? updatedAt,
+    required String? date,
+    required int id,
+  }) {
+    DateTime? parse(String? raw) =>
+        raw == null || raw.isEmpty ? null : DateTime.tryParse(raw);
+    final c = parse(createdAt);
+    final u = parse(updatedAt);
+    final d = parse(date);
+    bool hasTime(String? raw) =>
+        raw != null && (raw.contains('T') || raw.contains(':'));
+
+    DateTime picked;
+    if (c != null && hasTime(createdAt)) {
+      picked = c;
+    } else if (u != null && hasTime(updatedAt)) {
+      picked = u;
+    } else if (d != null) {
+      picked = d.add(Duration(seconds: id % 86400));
+    } else {
+      picked = DateTime.fromMillisecondsSinceEpoch(0);
+    }
+    return picked.toUtc();
+  }
+
   int _nextNo(String type) {
     final rows = _entries.where((e) => e.type == type).toList();
     if (rows.isEmpty) return 1;
@@ -109,9 +144,44 @@ class _BillsScreenState extends State<BillsScreen> {
     return _toDouble(m['amount']);
   }
 
+  int _parseBillNoFromNote(String note, String prefix) {
+    if (!note.startsWith(prefix)) return 0;
+    final m = RegExp('#(\\d+)').firstMatch(note);
+    return int.tryParse(m?.group(1) ?? '') ?? 0;
+  }
+
   int _safeBillNo(Map<String, dynamic> m, String key) {
     final n = _toInt(m[key]);
     return n > 0 ? n : 1;
+  }
+
+  Map<String, dynamic> _paymentStatus({
+    required double total,
+    required double paid,
+    required double balance,
+  }) {
+    if (total <= 0) {
+      return {
+        'label': 'Fully Paid',
+        'color': const Color(0xFF12965B),
+      };
+    }
+    if (balance > 0) {
+      if (paid > 0) {
+        return {
+          'label': 'Partially Paid',
+          'color': const Color(0xFFE67E22),
+        };
+      }
+      return {
+        'label': 'Unpaid',
+        'color': const Color(0xFFC6284D),
+      };
+    }
+    return {
+      'label': 'Fully Paid',
+      'color': const Color(0xFF12965B),
+    };
   }
 
   Future<void> _loadAll() async {
@@ -125,6 +195,7 @@ class _BillsScreenState extends State<BillsScreen> {
       _businessName = (businessName == null || businessName.isEmpty)
           ? 'Business'
           : businessName;
+      _activeBusinessId = businessId;
       _user = user;
       _loading = true;
     });
@@ -171,6 +242,87 @@ class _BillsScreenState extends State<BillsScreen> {
       };
 
       final mapped = <_BillEntry>[];
+      final paymentInBillNos = <int>{};
+      final paymentOutBillNos = <int>{};
+      final paymentInTotals = <int, double>{};
+      final paymentOutTotals = <int, double>{};
+      final saleIdToBillNo = <int, int>{};
+      final purchaseIdToBillNo = <int, int>{};
+
+      for (final raw in sales) {
+        final m = Map<String, dynamic>.from(raw as Map);
+        final id = _toInt(m['id']);
+        final number = _safeBillNo(m, 'bill_number');
+        saleIdToBillNo[id] = number;
+      }
+
+      for (final raw in purchases) {
+        final m = Map<String, dynamic>.from(raw as Map);
+        final id = _toInt(m['id']);
+        final number = _safeBillNo(m, 'purchase_number');
+        purchaseIdToBillNo[id] = number;
+      }
+
+      for (final raw in allCustomerTx) {
+        final m = Map<String, dynamic>.from(raw as Map);
+        final note = (m['note'] ?? '').toString();
+        if (!note.startsWith('Payment In #')) continue;
+        final saleIds =
+            (m['sale_ids'] as List?)?.map((e) => (e as num).toInt()).toList() ??
+                const <int>[];
+        final saleId =
+            (m['sale_id'] is num) ? (m['sale_id'] as num).toInt() : 0;
+        final linkedIds = <int>[
+          ...saleIds,
+          if (saleId > 0) saleId,
+        ];
+        if (linkedIds.isNotEmpty) {
+          for (final id in linkedIds) {
+            final billNo = saleIdToBillNo[id] ?? 0;
+            if (billNo <= 0) continue;
+            paymentInBillNos.add(billNo);
+            paymentInTotals[billNo] =
+                (paymentInTotals[billNo] ?? 0) + _toDouble(m['amount']);
+          }
+        } else {
+          final billNo = _parseBillNoFromNote(note, 'Payment In #');
+          if (billNo <= 0) continue;
+          paymentInBillNos.add(billNo);
+          paymentInTotals[billNo] =
+              (paymentInTotals[billNo] ?? 0) + _toDouble(m['amount']);
+        }
+      }
+
+      for (final raw in allSupplierTx) {
+        final m = Map<String, dynamic>.from(raw as Map);
+        final note = (m['note'] ?? '').toString();
+        if (!note.startsWith('Payment Out #')) continue;
+        final purchaseIds = (m['purchase_ids'] as List?)
+                ?.map((e) => (e as num).toInt())
+                .toList() ??
+            const <int>[];
+        final purchaseId =
+            (m['purchase_id'] is num) ? (m['purchase_id'] as num).toInt() : 0;
+        final linkedIds = <int>[
+          ...purchaseIds,
+          if (purchaseId > 0) purchaseId,
+        ];
+        if (linkedIds.isNotEmpty) {
+          for (final id in linkedIds) {
+            final billNo = purchaseIdToBillNo[id] ?? 0;
+            if (billNo <= 0) continue;
+            paymentOutBillNos.add(billNo);
+            paymentOutTotals[billNo] =
+                (paymentOutTotals[billNo] ?? 0) + _toDouble(m['amount']);
+          }
+        } else {
+          final billNo = _parseBillNoFromNote(note, 'Payment Out #');
+          if (billNo <= 0) continue;
+          paymentOutBillNos.add(billNo);
+          paymentOutTotals[billNo] =
+              (paymentOutTotals[billNo] ?? 0) + _toDouble(m['amount']);
+        }
+      }
 
       for (final raw in sales) {
         final m = Map<String, dynamic>.from(raw as Map);
@@ -178,12 +330,43 @@ class _BillsScreenState extends State<BillsScreen> {
         final number = _safeBillNo(m, 'bill_number');
         final date =
             DateTime.tryParse((m['date'] ?? '').toString()) ?? DateTime.now();
+        final sortDate = _serverSortDate(
+          createdAt: (m['created_at'] ?? '').toString(),
+          updatedAt: (m['updated_at'] ?? '').toString(),
+          date: (m['date'] ?? '').toString(),
+          id: id,
+        );
         final party = ((m['party_name'] ?? '').toString().trim().isEmpty)
             ? 'Walk-in Sale'
             : (m['party_name'] ?? '').toString();
         final total = _billTotal(m);
         final mode = (m['payment_mode'] ?? 'unpaid').toString();
-        final unpaid = mode == 'unpaid';
+        final paid = _toDouble(m['received_amount'] ?? m['paid_amount']);
+        final balance = _toDouble(m['balance_due']);
+        final status = _paymentStatus(
+          total: total,
+          paid: paid,
+          balance: balance,
+        );
+
+        if (paid > 0 && !paymentInBillNos.contains(number)) {
+          mapped.add(
+            _BillEntry(
+              id: id,
+              type: 'payment_in',
+              partyName: party,
+              label: 'Payment In #$number',
+              billNumber: number,
+              date: date.add(const Duration(seconds: 1)),
+              sortDate: sortDate.add(const Duration(seconds: 1)),
+              sortId: id,
+              amount: paid,
+              paymentMode: mode == 'card' ? 'card' : 'cash',
+              paymentStatusLabel: mode == 'card' ? 'Card' : 'Cash',
+              statusColor: Colors.black87,
+            ),
+          );
+        }
 
         mapped.add(
           _BillEntry(
@@ -193,11 +376,12 @@ class _BillsScreenState extends State<BillsScreen> {
             label: 'Sale Bill #$number',
             billNumber: number,
             date: date,
+            sortDate: sortDate,
+            sortId: id,
             amount: total,
             paymentMode: mode,
-            paymentStatusLabel: unpaid ? 'Unpaid' : 'Fully Paid',
-            statusColor:
-                unpaid ? const Color(0xFFC6284D) : const Color(0xFF12965B),
+            paymentStatusLabel: status['label'] as String,
+            statusColor: status['color'] as Color,
           ),
         );
       }
@@ -208,12 +392,43 @@ class _BillsScreenState extends State<BillsScreen> {
         final number = _safeBillNo(m, 'purchase_number');
         final date =
             DateTime.tryParse((m['date'] ?? '').toString()) ?? DateTime.now();
+        final sortDate = _serverSortDate(
+          createdAt: (m['created_at'] ?? '').toString(),
+          updatedAt: (m['updated_at'] ?? '').toString(),
+          date: (m['date'] ?? '').toString(),
+          id: id,
+        );
         final party = ((m['party_name'] ?? '').toString().trim().isEmpty)
             ? 'Walk-in Purchase'
             : (m['party_name'] ?? '').toString();
         final total = _billTotal(m);
         final mode = (m['payment_mode'] ?? 'unpaid').toString();
-        final unpaid = mode == 'unpaid';
+        final paid = _toDouble(m['paid_amount'] ?? m['received_amount']);
+        final balance = _toDouble(m['balance_due']);
+        final status = _paymentStatus(
+          total: total,
+          paid: paid,
+          balance: balance,
+        );
+
+        if (paid > 0 && !paymentOutBillNos.contains(number)) {
+          mapped.add(
+            _BillEntry(
+              id: id,
+              type: 'payment_out',
+              partyName: party,
+              label: 'Payment Out #$number',
+              billNumber: number,
+              date: date.add(const Duration(seconds: 1)),
+              sortDate: sortDate.add(const Duration(seconds: 1)),
+              sortId: id,
+              amount: paid,
+              paymentMode: mode == 'card' ? 'card' : 'cash',
+              paymentStatusLabel: mode == 'card' ? 'Card' : 'Cash',
+              statusColor: Colors.black87,
+            ),
+          );
+        }
 
         mapped.add(
           _BillEntry(
@@ -223,11 +438,12 @@ class _BillsScreenState extends State<BillsScreen> {
             label: 'Purchase #$number',
             billNumber: number,
             date: date,
+            sortDate: sortDate,
+            sortId: id,
             amount: total,
             paymentMode: mode,
-            paymentStatusLabel: unpaid ? 'Unpaid' : 'Fully Paid',
-            statusColor:
-                unpaid ? const Color(0xFFC6284D) : const Color(0xFF12965B),
+            paymentStatusLabel: status['label'] as String,
+            statusColor: status['color'] as Color,
           ),
         );
       }
@@ -238,6 +454,12 @@ class _BillsScreenState extends State<BillsScreen> {
         final number = _safeBillNo(m, 'expense_number');
         final date =
             DateTime.tryParse((m['date'] ?? '').toString()) ?? DateTime.now();
+        final sortDate = _serverSortDate(
+          createdAt: (m['created_at'] ?? '').toString(),
+          updatedAt: (m['updated_at'] ?? '').toString(),
+          date: (m['date'] ?? '').toString(),
+          id: id,
+        );
         final amount = _toDouble(m['amount']);
         final category = (m['category_name'] ?? '').toString().trim();
         final items = (m['items'] as List?) ?? const [];
@@ -259,8 +481,12 @@ class _BillsScreenState extends State<BillsScreen> {
             label: 'Expense #$number',
             billNumber: number,
             date: date,
+            sortDate: sortDate,
+            sortId: id,
             amount: amount,
-            paymentMode: 'expense',
+            paymentMode: ((m['payment_mode'] ?? 'cash').toString() == 'card')
+                ? 'card'
+                : 'cash',
             paymentStatusLabel: '',
             statusColor: Colors.black87,
             extraInfo: info.isEmpty ? null : info,
@@ -274,6 +500,12 @@ class _BillsScreenState extends State<BillsScreen> {
         final number = _toInt(m['return_number']);
         final date =
             DateTime.tryParse((m['date'] ?? '').toString()) ?? DateTime.now();
+        final sortDate = _serverSortDate(
+          createdAt: (m['created_at'] ?? '').toString(),
+          updatedAt: (m['updated_at'] ?? '').toString(),
+          date: (m['date'] ?? '').toString(),
+          id: id,
+        );
         final customerId = _toInt(m['customer_id']);
         final party = customerNameById[customerId] ??
             (((m['note'] ?? '').toString().trim().isEmpty)
@@ -290,6 +522,8 @@ class _BillsScreenState extends State<BillsScreen> {
             label: 'Sale Return #$number',
             billNumber: number,
             date: date,
+            sortDate: sortDate,
+            sortId: id,
             amount: total,
             paymentMode: mode,
             paymentStatusLabel:
@@ -305,6 +539,12 @@ class _BillsScreenState extends State<BillsScreen> {
         final number = _toInt(m['return_number']);
         final date =
             DateTime.tryParse((m['date'] ?? '').toString()) ?? DateTime.now();
+        final sortDate = _serverSortDate(
+          createdAt: (m['created_at'] ?? '').toString(),
+          updatedAt: (m['updated_at'] ?? '').toString(),
+          date: (m['date'] ?? '').toString(),
+          id: id,
+        );
         final supplierId = _toInt(m['supplier_id']);
         final party = supplierNameById[supplierId] ??
             (((m['note'] ?? '').toString().trim().isEmpty)
@@ -321,6 +561,8 @@ class _BillsScreenState extends State<BillsScreen> {
             label: 'Purchase Return #$number',
             billNumber: number,
             date: date,
+            sortDate: sortDate,
+            sortId: id,
             amount: total,
             paymentMode: mode,
             paymentStatusLabel:
@@ -336,11 +578,18 @@ class _BillsScreenState extends State<BillsScreen> {
         final m = Map<String, dynamic>.from(raw as Map);
         final note = (m['note'] ?? '').toString();
         if (!note.startsWith('Payment In #')) continue;
+        final nRaw = m['payment_number'];
         final parsedNo = paymentNoRegex.firstMatch(note);
-        final n = int.tryParse(parsedNo?.group(1) ?? '') ?? 0;
+        final n = (nRaw is num)
+            ? nRaw.toInt()
+            : int.tryParse(parsedNo?.group(1) ?? '') ?? 0;
         final customerId = _toInt(m['customer_id']);
-        final date = DateTime.tryParse((m['created_at'] ?? '').toString()) ??
-            DateTime.now();
+        final date = _serverSortDate(
+          createdAt: (m['created_at'] ?? '').toString(),
+          updatedAt: (m['updated_at'] ?? '').toString(),
+          date: (m['date'] ?? '').toString(),
+          id: _toInt(m['id']),
+        );
         mapped.add(
           _BillEntry(
             id: _toInt(m['id']),
@@ -349,6 +598,8 @@ class _BillsScreenState extends State<BillsScreen> {
             label: n > 0 ? 'Payment In #$n' : 'Payment In',
             billNumber: n,
             date: date,
+            sortDate: date,
+            sortId: _toInt(m['id']),
             amount: _toDouble(m['amount']),
             paymentMode: note.toLowerCase().contains('card') ? 'card' : 'cash',
             paymentStatusLabel:
@@ -362,11 +613,18 @@ class _BillsScreenState extends State<BillsScreen> {
         final m = Map<String, dynamic>.from(raw as Map);
         final note = (m['note'] ?? '').toString();
         if (!note.startsWith('Payment Out #')) continue;
+        final nRaw = m['payment_number'];
         final parsedNo = paymentNoRegex.firstMatch(note);
-        final n = int.tryParse(parsedNo?.group(1) ?? '') ?? 0;
+        final n = (nRaw is num)
+            ? nRaw.toInt()
+            : int.tryParse(parsedNo?.group(1) ?? '') ?? 0;
         final supplierId = _toInt(m['supplier_id']);
-        final date = DateTime.tryParse((m['created_at'] ?? '').toString()) ??
-            DateTime.now();
+        final date = _serverSortDate(
+          createdAt: (m['created_at'] ?? '').toString(),
+          updatedAt: (m['updated_at'] ?? '').toString(),
+          date: (m['date'] ?? '').toString(),
+          id: _toInt(m['id']),
+        );
         mapped.add(
           _BillEntry(
             id: _toInt(m['id']),
@@ -375,6 +633,8 @@ class _BillsScreenState extends State<BillsScreen> {
             label: n > 0 ? 'Payment Out #$n' : 'Payment Out',
             billNumber: n,
             date: date,
+            sortDate: date,
+            sortId: _toInt(m['id']),
             amount: _toDouble(m['amount']),
             paymentMode: note.toLowerCase().contains('card') ? 'card' : 'cash',
             paymentStatusLabel:
@@ -384,7 +644,11 @@ class _BillsScreenState extends State<BillsScreen> {
         );
       }
 
-      mapped.sort((a, b) => b.date.compareTo(a.date));
+      mapped.sort((a, b) {
+        final dateCmp = b.sortDate.compareTo(a.sortDate);
+        if (dateCmp != 0) return dateCmp;
+        return b.sortId.compareTo(a.sortId);
+      });
 
       if (!mounted) return;
       setState(() {
@@ -396,6 +660,7 @@ class _BillsScreenState extends State<BillsScreen> {
         _nextExpenseNo = _nextNo('expense');
         _loading = false;
       });
+      AppEvents.notifyPartiesChanged();
     } catch (e) {
       if (!mounted) return;
       setState(() => _loading = false);
@@ -429,14 +694,28 @@ class _BillsScreenState extends State<BillsScreen> {
     }
 
     final q = _query.trim().toLowerCase();
-    if (q.isEmpty) return rows.toList();
+    if (q.isEmpty) {
+      final list = rows.toList();
+      list.sort((a, b) {
+        final dateCmp = b.sortDate.compareTo(a.sortDate);
+        if (dateCmp != 0) return dateCmp;
+        return b.sortId.compareTo(a.sortId);
+      });
+      return list;
+    }
 
-    return rows.where((e) {
+    final filtered = rows.where((e) {
       return e.partyName.toLowerCase().contains(q) ||
           e.label.toLowerCase().contains(q) ||
           e.billNumber.toString().contains(q) ||
           (e.extraInfo ?? '').toLowerCase().contains(q);
     }).toList();
+    filtered.sort((a, b) {
+      final dateCmp = b.sortDate.compareTo(a.sortDate);
+      if (dateCmp != 0) return dateCmp;
+      return b.sortId.compareTo(a.sortId);
+    });
+    return filtered;
   }
 
   bool _isToday(DateTime d) {
@@ -458,6 +737,30 @@ class _BillsScreenState extends State<BillsScreen> {
   double get _todayOut => _entries
       .where((e) =>
           (e.type == 'payment_out' || e.type == 'expense') && _isToday(e.date))
+      .fold(0, (s, e) => s + e.amount);
+
+  double get _todayInCash => _entries
+      .where((e) =>
+          e.type == 'payment_in' && e.paymentMode != 'card' && _isToday(e.date))
+      .fold(0, (s, e) => s + e.amount);
+
+  double get _todayOutCash => _entries
+      .where((e) =>
+          (e.type == 'payment_out' || e.type == 'expense') &&
+          e.paymentMode != 'card' &&
+          _isToday(e.date))
+      .fold(0, (s, e) => s + e.amount);
+
+  double get _todayInBank => _entries
+      .where((e) =>
+          e.type == 'payment_in' && e.paymentMode == 'card' && _isToday(e.date))
+      .fold(0, (s, e) => s + e.amount);
+
+  double get _todayOutBank => _entries
+      .where((e) =>
+          (e.type == 'payment_out' || e.type == 'expense') &&
+          e.paymentMode == 'card' &&
+          _isToday(e.date))
       .fold(0, (s, e) => s + e.amount);
 
   Future<void> _openSale() async {
@@ -543,29 +846,30 @@ class _BillsScreenState extends State<BillsScreen> {
   }
 
   void _openCashbook() {
-    final rows = _entries
-        .where((e) =>
-            e.type == 'payment_in' ||
-            e.type == 'payment_out' ||
-            e.type == 'expense')
-        .map((e) => {
-              'date': e.date,
-              'label': e.type == 'payment_in'
-                  ? 'Payment In'
-                  : e.type == 'payment_out'
-                      ? 'Payment Out'
-                      : 'Expense',
-              'amount': e.amount,
-              'direction': e.type == 'payment_in' ? 'in' : 'out',
-            })
-        .toList();
-
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => CashbookScreen(
+          businessId: _activeBusinessId ?? 0,
           businessName: _businessName,
-          entries: rows,
+          title: 'Cashbook',
+          reportButtonText: 'VIEW CASHBOOK REPORT',
+          modeFilter: 'cash',
+        ),
+      ),
+    );
+  }
+
+  void _openBankbook() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CashbookScreen(
+          businessId: _activeBusinessId ?? 0,
+          businessName: _businessName,
+          title: 'Bank Book',
+          reportButtonText: 'VIEW BANK BOOK REPORT',
+          modeFilter: 'card',
         ),
       ),
     );
@@ -586,101 +890,107 @@ class _BillsScreenState extends State<BillsScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) {
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 18, 16, 22),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  _MoreAction(
-                    icon: Icons.note_alt_outlined,
-                    label: _tab == 'purchase' ? 'Purchase' : 'Sale',
-                    bg: const Color(0xFFE9F5ED),
-                    fg: const Color(0xFF12965B),
-                    onTap: () {
-                      Navigator.pop(context);
-                      if (_tab == 'purchase') {
-                        _openPurchase();
-                      } else {
-                        _openSale();
-                      }
-                    },
-                  ),
-                  _MoreAction(
-                    icon: Icons.assignment_return_outlined,
-                    label:
-                        _tab == 'purchase' ? 'Purchase Return' : 'Sale Return',
-                    bg: const Color(0xFFF9F6DE),
-                    fg: const Color(0xFFA88E1F),
-                    onTap: () async {
-                      Navigator.pop(context);
-                      final ok = await Navigator.push<bool>(
-                        this.context,
-                        MaterialPageRoute(
-                          builder: (_) => AddBillReturnScreen(
-                            isPurchase: _tab == 'purchase',
-                            returnNumber: nextReturnNo <= 0 ? 1 : nextReturnNo,
-                          ),
-                        ),
-                      );
-                      if (ok == true) {
-                        _loadAll();
-                      }
-                    },
-                  ),
-                  _MoreAction(
-                    icon: Icons.currency_exchange,
-                    label: _tab == 'purchase' ? 'Payment Out' : 'Payment In',
-                    bg: _tab == 'purchase'
-                        ? const Color(0xFFFCEAF0)
-                        : const Color(0xFFE9F5ED),
-                    fg: _tab == 'purchase'
-                        ? const Color(0xFFC2185B)
-                        : const Color(0xFF12965B),
-                    onTap: () async {
-                      Navigator.pop(context);
-                      final ok = await Navigator.push<bool>(
-                        this.context,
-                        MaterialPageRoute(
-                          builder: (_) => AddBillPaymentScreen(
-                            isPurchase: _tab == 'purchase',
-                            paymentNumber:
-                                nextPaymentNo <= 0 ? 1 : nextPaymentNo,
-                          ),
-                        ),
-                      );
-                      if (ok == true) {
-                        _loadAll();
-                      }
-                    },
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Container(
-                width: double.infinity,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.black26),
-                ),
-                child: Row(
+        final bottomInset = MediaQuery.of(context).padding.bottom;
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(16, 18, 16, 22 + bottomInset),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
-                    Expanded(
-                      child: Text(
-                        _tab == 'purchase'
-                            ? 'Purchase, Payment Out, Purchase Return'
-                            : 'Sale, Payment In, Sale Return',
-                      ),
+                    _MoreAction(
+                      icon: Icons.note_alt_outlined,
+                      label: _tab == 'purchase' ? 'Purchase' : 'Sale',
+                      bg: const Color(0xFFE9F5ED),
+                      fg: const Color(0xFF12965B),
+                      onTap: () {
+                        Navigator.pop(context);
+                        if (_tab == 'purchase') {
+                          _openPurchase();
+                        } else {
+                          _openSale();
+                        }
+                      },
                     ),
-                    const Icon(Icons.chevron_right),
+                    _MoreAction(
+                      icon: Icons.assignment_return_outlined,
+                      label: _tab == 'purchase'
+                          ? 'Purchase Return'
+                          : 'Sale Return',
+                      bg: const Color(0xFFF9F6DE),
+                      fg: const Color(0xFFA88E1F),
+                      onTap: () async {
+                        Navigator.pop(context);
+                        final ok = await Navigator.push<bool>(
+                          this.context,
+                          MaterialPageRoute(
+                            builder: (_) => AddBillReturnScreen(
+                              isPurchase: _tab == 'purchase',
+                              returnNumber:
+                                  nextReturnNo <= 0 ? 1 : nextReturnNo,
+                            ),
+                          ),
+                        );
+                        if (ok == true) {
+                          _loadAll();
+                        }
+                      },
+                    ),
+                    _MoreAction(
+                      icon: Icons.currency_exchange,
+                      label: _tab == 'purchase' ? 'Payment Out' : 'Payment In',
+                      bg: _tab == 'purchase'
+                          ? const Color(0xFFFCEAF0)
+                          : const Color(0xFFE9F5ED),
+                      fg: _tab == 'purchase'
+                          ? const Color(0xFFC2185B)
+                          : const Color(0xFF12965B),
+                      onTap: () async {
+                        Navigator.pop(context);
+                        final ok = await Navigator.push<bool>(
+                          this.context,
+                          MaterialPageRoute(
+                            builder: (_) => AddBillPaymentScreen(
+                              isPurchase: _tab == 'purchase',
+                              paymentNumber:
+                                  nextPaymentNo <= 0 ? 1 : nextPaymentNo,
+                            ),
+                          ),
+                        );
+                        if (ok == true) {
+                          _loadAll();
+                        }
+                      },
+                    ),
                   ],
                 ),
-              ),
-            ],
+                const SizedBox(height: 16),
+                Container(
+                  width: double.infinity,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.black26),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _tab == 'purchase'
+                              ? 'Purchase, Payment Out, Purchase Return'
+                              : 'Sale, Payment In, Sale Return',
+                        ),
+                      ),
+                      const Icon(Icons.chevron_right),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -741,9 +1051,9 @@ class _BillsScreenState extends State<BillsScreen> {
                     const SyncStatusChip(onDark: true, compact: true),
                   ],
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 8),
                 SizedBox(
-                  height: 96,
+                  height: 60,
                   child: Row(
                     children: [
                       Expanded(
@@ -780,47 +1090,73 @@ class _BillsScreenState extends State<BillsScreen> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 8),
-                InkWell(
-                  onTap: _openCashbook,
-                  borderRadius: BorderRadius.circular(12),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 12,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: _cashStat(
-                            value: 'AED ${_todayIn.toStringAsFixed(0)}',
-                            label: "Today's IN",
-                            valueColor: const Color(0xFF12965B),
+                const SizedBox(height: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _cashStat(
+                              value: 'AED ${_todayInCash.toStringAsFixed(0)}',
+                              label: "Cash book In",
+                              valueColor: const Color(0xFF12965B),
+                            ),
                           ),
-                        ),
-                        Container(
-                          width: 1,
-                          height: 42,
-                          color: const Color(0xFFE6EAF0),
-                        ),
-                        Expanded(
-                          child: _cashStat(
-                            value: 'AED ${_todayOut.toStringAsFixed(0)}',
-                            label: "Today's OUT",
-                            valueColor: const Color(0xFFC6284D),
+                          Container(
+                            width: 1,
+                            height: 32,
+                            color: const Color(0xFFE6EAF0),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        const Icon(Icons.chevron_right, color: brandBlue),
-                      ],
-                    ),
+                          Expanded(
+                            child: _cashStat(
+                              value: 'AED ${_todayOutCash.toStringAsFixed(0)}',
+                              label: "Cash book Out",
+                              valueColor: const Color(0xFFC6284D),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          _miniBookButton('Cash Book', _openCashbook),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _cashStat(
+                              value: 'AED ${_todayInBank.toStringAsFixed(0)}',
+                              label: "Bank book In",
+                              valueColor: const Color(0xFF12965B),
+                            ),
+                          ),
+                          Container(
+                            width: 1,
+                            height: 32,
+                            color: const Color(0xFFE6EAF0),
+                          ),
+                          Expanded(
+                            child: _cashStat(
+                              value: 'AED ${_todayOutBank.toStringAsFixed(0)}',
+                              label: "Bank book Out",
+                              valueColor: const Color(0xFFC6284D),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          _miniBookButton('Bank Book', _openBankbook),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
                 Row(
                   children: [
                     if (canViewSale) _billTab('sale', 'Sale'),
@@ -878,34 +1214,98 @@ class _BillsScreenState extends State<BillsScreen> {
                   ),
                 ),
                 Expanded(
-                  child: _loading
-                      ? const Center(child: CircularProgressIndicator())
-                      : _filtered.isEmpty
-                          ? Center(
-                              child: Text(
-                                _tab == 'sale'
-                                    ? 'No sale bills yet'
-                                    : _tab == 'purchase'
-                                        ? 'No purchase bills yet'
-                                        : 'No expenses yet',
+                  child: RefreshIndicator(
+                    onRefresh: _loadAll,
+                    child: _loading
+                        ? ListView(
+                            children: const [
+                              SizedBox(height: 200),
+                              Center(child: CircularProgressIndicator()),
+                            ],
+                          )
+                        : _filtered.isEmpty
+                            ? ListView(
+                                children: [
+                                  const SizedBox(height: 120),
+                                  Center(
+                                    child: Text(
+                                      _tab == 'sale'
+                                          ? 'No sale bills yet'
+                                          : _tab == 'purchase'
+                                              ? 'No purchase bills yet'
+                                              : 'No expenses yet',
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : ListView.builder(
+                                itemCount: _filtered.length,
+                                padding: const EdgeInsets.only(bottom: 90),
+                                itemBuilder: (context, index) {
+                                  final e = _filtered[index];
+                                  return InkWell(
+                                    onTap: e.type == 'expense'
+                                        ? () => _openExpenseDetails(e)
+                                        : (e.type == 'sale_return' ||
+                                                e.type == 'purchase_return')
+                                            ? () => _openReturnActions(e)
+                                            : (e.type == 'payment_in' ||
+                                                    e.type == 'payment_out')
+                                                ? () async {
+                                                    final updated =
+                                                        await Navigator.push<
+                                                            bool>(
+                                                      context,
+                                                      MaterialPageRoute(
+                                                        builder: (_) =>
+                                                            PaymentDetailScreen(
+                                                          paymentId: e.id,
+                                                          paymentNumber:
+                                                              e.billNumber,
+                                                          isPurchase: e.type ==
+                                                              'payment_out',
+                                                          partyName:
+                                                              e.partyName,
+                                                          amount: e.amount,
+                                                          paymentMode:
+                                                              e.paymentMode,
+                                                          date: e.date,
+                                                        ),
+                                                      ),
+                                                    );
+                                                    if (updated == true) {
+                                                      _loadAll();
+                                                    }
+                                                  }
+                                                : (e.type == 'sale' ||
+                                                        e.type == 'purchase')
+                                                    ? () async {
+                                                        final updated =
+                                                            await Navigator
+                                                                .push<bool>(
+                                                          context,
+                                                          MaterialPageRoute(
+                                                            builder: (_) =>
+                                                                BillDetailScreen(
+                                                              billId: e.id,
+                                                              billNumber:
+                                                                  e.billNumber,
+                                                              isPurchase: e
+                                                                      .type ==
+                                                                  'purchase',
+                                                            ),
+                                                          ),
+                                                        );
+                                                        if (updated == true) {
+                                                          _loadAll();
+                                                        }
+                                                      }
+                                                    : null,
+                                    child: _entryTile(e),
+                                  );
+                                },
                               ),
-                            )
-                          : ListView.builder(
-                              itemCount: _filtered.length,
-                              padding: const EdgeInsets.only(bottom: 90),
-                              itemBuilder: (context, index) {
-                                final e = _filtered[index];
-                                return InkWell(
-                                  onTap: e.type == 'expense'
-                                      ? () => _openExpenseDetails(e)
-                                      : (e.type == 'sale_return' ||
-                                              e.type == 'purchase_return')
-                                          ? () => _openReturnActions(e)
-                                          : null,
-                                  child: _entryTile(e),
-                                );
-                              },
-                            ),
+                  ),
                 ),
               ],
             ),
@@ -927,7 +1327,7 @@ class _BillsScreenState extends State<BillsScreen> {
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(30),
                     ),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
                   ),
                   child: const Column(
                     mainAxisSize: MainAxisSize.min,
@@ -937,11 +1337,15 @@ class _BillsScreenState extends State<BillsScreen> {
                         style: TextStyle(
                           color: Color(0xFF1D2A8D),
                           fontWeight: FontWeight.w700,
+                          fontSize: 12,
                         ),
                       ),
                       SizedBox(height: 2),
-                      Text('Payment & Return',
-                          style: TextStyle(color: Color(0xFF1D2A8D))),
+                      Text(
+                        'Payment & Return',
+                        style:
+                            TextStyle(color: Color(0xFF1D2A8D), fontSize: 11),
+                      ),
                     ],
                   ),
                 ),
@@ -965,7 +1369,10 @@ class _BillsScreenState extends State<BillsScreen> {
                         : _tab == 'purchase'
                             ? 'ADD PURCHASE'
                             : 'ADD EXPENSE',
-                    style: const TextStyle(fontWeight: FontWeight.w700),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
                   ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF1D2A8D),
@@ -973,7 +1380,7 @@ class _BillsScreenState extends State<BillsScreen> {
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(30),
                     ),
-                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
                 ),
               ),
@@ -1023,16 +1430,16 @@ class _BillsScreenState extends State<BillsScreen> {
 
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(10),
       margin: const EdgeInsets.only(bottom: 1),
       child: Row(
         children: [
           CircleAvatar(
-            radius: 24,
+            radius: 20,
             backgroundColor: bg,
-            child: Icon(icon, color: fg),
+            child: Icon(icon, color: fg, size: 20),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1040,25 +1447,26 @@ class _BillsScreenState extends State<BillsScreen> {
                 Text(
                   e.partyName,
                   style: const TextStyle(
-                      fontSize: 17, fontWeight: FontWeight.w500),
+                      fontSize: 14, fontWeight: FontWeight.w600),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 3),
                 Container(
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                   decoration: BoxDecoration(
                     color: const Color(0xFFF2F2F2),
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
                     e.label,
-                    style: const TextStyle(color: Colors.black54),
+                    style:
+                        const TextStyle(color: Colors.black54, fontSize: 11.5),
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 3),
                 Text(
                   '${e.date.day.toString().padLeft(2, '0')} ${_month(e.date.month)} ${e.date.year.toString().substring(2)}',
-                  style: const TextStyle(color: Colors.black54),
+                  style: const TextStyle(color: Colors.black54, fontSize: 11.5),
                 ),
                 if (e.extraInfo != null) ...[
                   const SizedBox(height: 2),
@@ -1078,14 +1486,16 @@ class _BillsScreenState extends State<BillsScreen> {
               Text(
                 'AED ${e.amount.toStringAsFixed(0)}',
                 style:
-                    const TextStyle(fontWeight: FontWeight.w600, fontSize: 18),
+                    const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               if (e.paymentStatusLabel.isNotEmpty)
                 Text(
                   e.paymentStatusLabel,
                   style: TextStyle(
-                      color: e.statusColor, fontWeight: FontWeight.w600),
+                      color: e.statusColor,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 11.5),
                 ),
             ],
           ),
@@ -1123,9 +1533,9 @@ class _BillsScreenState extends State<BillsScreen> {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(10),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -1135,16 +1545,16 @@ class _BillsScreenState extends State<BillsScreen> {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: valueColor,
-              fontSize: 17,
+              fontSize: 13,
               fontWeight: FontWeight.w800,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 2),
           Text(
             title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: Color(0xFF6A7280), fontSize: 13),
+            style: const TextStyle(color: Color(0xFF6A7280), fontSize: 10.5),
           ),
         ],
       ),
@@ -1158,9 +1568,9 @@ class _BillsScreenState extends State<BillsScreen> {
       child: Container(
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(10),
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         child: const Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -1171,13 +1581,42 @@ class _BillsScreenState extends State<BillsScreen> {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: Color(0xFF0B4F9E),
-                fontSize: 15,
+                fontSize: 12,
                 fontWeight: FontWeight.w800,
               ),
             ),
-            SizedBox(height: 4),
-            Icon(Icons.chevron_right, color: Color(0xFF0B4F9E)),
+            SizedBox(height: 2),
+            Icon(Icons.chevron_right, color: Color(0xFF0B4F9E), size: 18),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _miniBookButton(String label, VoidCallback onTap) {
+    return SizedBox(
+      width: 82,
+      height: 28,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xFFF5F8FC),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFFD8E3F1)),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: onTap,
+          child: Center(
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Color(0xFF0B4F9E),
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -1195,13 +1634,13 @@ class _BillsScreenState extends State<BillsScreen> {
           style: TextStyle(
             color: valueColor,
             fontWeight: FontWeight.w800,
-            fontSize: 18,
+            fontSize: 13,
           ),
         ),
-        const SizedBox(height: 3),
+        const SizedBox(height: 2),
         Text(
           label,
-          style: const TextStyle(color: Color(0xFF6A7280), fontSize: 13),
+          style: const TextStyle(color: Color(0xFF6A7280), fontSize: 10.5),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),

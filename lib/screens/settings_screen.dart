@@ -57,12 +57,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   bool _isImageUrl(String url) {
-    final lower = url.toLowerCase();
-    return lower.endsWith('.jpg') ||
-        lower.endsWith('.jpeg') ||
-        lower.endsWith('.png') ||
-        lower.endsWith('.webp') ||
-        lower.endsWith('.gif');
+    final parsed = Uri.tryParse(url);
+    final path = (parsed?.path ?? url).toLowerCase();
+    return path.endsWith('.jpg') ||
+        path.endsWith('.jpeg') ||
+        path.endsWith('.png') ||
+        path.endsWith('.webp') ||
+        path.endsWith('.gif');
   }
 
   void _collectImageUrls(dynamic value, Set<String> refs,
@@ -199,33 +200,82 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final imagesDir = Directory(p.join(workDir.path, 'images'));
       await imagesDir.create(recursive: true);
       var imageSavedCount = 0;
+      final failedRefs = <String>[];
       var idx = 0;
+      final token = await Api.getToken();
       for (final ref in imageRefs) {
         idx++;
         try {
+          debugPrint('Backup image[$idx] start: $ref');
           final target = File(p.join(imagesDir.path,
               '${idx}_${DateTime.now().millisecondsSinceEpoch}.jpg'));
           if (ref.startsWith('file://')) {
             final localPath = ref.substring(7);
             final localFile = File(localPath);
-            if (!await localFile.exists()) continue;
+            if (!await localFile.exists()) {
+              debugPrint(
+                  'Backup image[$idx] fail: local file not found: $localPath');
+              failedRefs.add(ref);
+              continue;
+            }
             final bytes = await localFile.readAsBytes();
-            if (bytes.isEmpty) continue;
+            if (bytes.isEmpty) {
+              debugPrint(
+                  'Backup image[$idx] fail: local file empty: $localPath');
+              failedRefs.add(ref);
+              continue;
+            }
             await target.writeAsBytes(bytes, flush: true);
+            debugPrint('Backup image[$idx] success (local): ${target.path}');
           } else {
             http.Response? res;
-            for (var i = 0; i < 2; i++) {
+            int? lastStatus;
+            final candidates = <String>[
+              ref,
+              ref.replaceFirst('/public/storage/', '/storage/app/public/'),
+              ref
+                  .replaceFirst('/public/storage/', '/storage/app/public/')
+                  .replaceFirst('/attachments/', '/attachment/'),
+              ref.replaceFirst('/attachments/', '/attachment/'),
+            ].toSet().toList();
+            for (var i = 0; i < candidates.length; i++) {
+              final candidate = candidates[i];
               try {
+                final headers = <String, String>{'Accept': 'application/json'};
+                if ((token ?? '').isNotEmpty) {
+                  headers['Authorization'] = 'Bearer $token';
+                }
                 final r = await http
-                    .get(Uri.parse(ref))
+                    .get(Uri.parse(candidate), headers: headers)
                     .timeout(const Duration(seconds: 12));
+                lastStatus = r.statusCode;
                 if (r.statusCode == 200 && r.bodyBytes.isNotEmpty) {
                   res = r;
+                  debugPrint('Backup image[$idx] resolved url: $candidate');
                   break;
                 }
-              } catch (_) {}
+                final fallback = await http
+                    .get(Uri.parse(candidate))
+                    .timeout(const Duration(seconds: 12));
+                lastStatus = fallback.statusCode;
+                if (fallback.statusCode == 200 &&
+                    fallback.bodyBytes.isNotEmpty) {
+                  res = fallback;
+                  debugPrint(
+                      'Backup image[$idx] resolved url (fallback): $candidate');
+                  break;
+                }
+              } catch (e) {
+                debugPrint(
+                    'Backup image[$idx] try ${i + 1}/${candidates.length} exception: $e');
+              }
             }
-            if (res == null) continue;
+            if (res == null) {
+              debugPrint(
+                  'Backup image[$idx] fail (remote): status=$lastStatus url=$ref');
+              failedRefs.add(ref);
+              continue;
+            }
             final uri = Uri.parse(ref);
             final baseName = p.basename(uri.path).isEmpty
                 ? 'img_$idx.jpg'
@@ -233,9 +283,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             final namedTarget =
                 File(p.join(imagesDir.path, '${idx}_$baseName'));
             await namedTarget.writeAsBytes(res.bodyBytes, flush: true);
+            debugPrint(
+                'Backup image[$idx] success (remote): ${namedTarget.path}');
           }
           imageSavedCount++;
         } catch (_) {
+          debugPrint('Backup image[$idx] fail (unexpected): $ref');
+          failedRefs.add(ref);
           // Ignore failing image URLs and continue backup.
         }
       }
@@ -259,7 +313,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           title: const Text('Backup completed'),
           content: Text(
             'Backup saved to:\n$zipPath\n\n'
-            'Images backed up: $imageSavedCount / ${imageRefs.length}',
+            '${imageSavedCount > 0 ? 'Images backed up' : 'Backup completed'}',
           ),
           actions: [
             TextButton(

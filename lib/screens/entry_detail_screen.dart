@@ -44,7 +44,7 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
   }
 
   String _formatDate(String raw) {
-    final dt = DateTime.tryParse(raw);
+    final dt = DateTime.tryParse(raw)?.toLocal();
     if (dt == null) return raw;
     return DateFormat('dd MMM yyyy • hh:mm a').format(dt);
   }
@@ -132,7 +132,13 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
     final amountValue = _asDouble(widget.entry['amount']);
     final amount = amountValue.toStringAsFixed(0);
     final type = (widget.entry['type'] ?? '').toString();
-    final date = _formatDate((widget.entry['created_at'] ?? '').toString());
+    final date = _formatDate(
+      (widget.entry['created_at'] ??
+              widget.entry['updated_at'] ??
+              widget.entry['date'] ??
+              '')
+          .toString(),
+    );
     final amountColor = _amountColor(type);
     final balanceColor = _balanceColor(widget.runningBalance);
     final typeText = type == 'CREDIT' ? 'You gave' : 'You got';
@@ -151,7 +157,7 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
     );
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
+      backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: brandBlue,
         foregroundColor: Colors.white,
@@ -229,9 +235,13 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
                       ),
                     ),
                   Card(
-                    elevation: 0,
+                    elevation: 1.2,
+                    color: Colors.white,
+                    surfaceTintColor: Colors.white,
+                    shadowColor: Colors.black12,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14),
+                      side: const BorderSide(color: Color(0xFFE6E9EF)),
                     ),
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
@@ -310,11 +320,11 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
                               width: double.infinity,
                               margin: const EdgeInsets.only(bottom: 14),
                               padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFF8FAFF),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: const Color(0xFFE1E8F5)),
-                              ),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFE6E9EF)),
+                      ),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
@@ -340,15 +350,15 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
                               const Text(
                                 'Running Balance',
                                 style: TextStyle(
-                                  fontSize: 16,
+                                  fontSize: 14,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
                               Text(
                                 'AED ${widget.runningBalance.abs().toStringAsFixed(0)}',
                                 style: TextStyle(
-                                  fontSize: 26,
-                                  fontWeight: FontWeight.w800,
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w700,
                                   color: balanceColor,
                                 ),
                               ),

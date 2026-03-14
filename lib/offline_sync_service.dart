@@ -465,6 +465,18 @@ class OfflineSyncService {
           queueOnFailure: false,
         );
         return;
+      case 'cashbook.create':
+        await Api.createCashbookEntry(
+          businessId: payload['businessId'] as int,
+          direction: (payload['direction'] ?? 'out').toString(),
+          amount: (payload['amount'] as num).toDouble(),
+          paymentMode: (payload['paymentMode'] ?? 'cash').toString(),
+          date: (payload['date'] ?? '').toString(),
+          note: payload['note']?.toString(),
+          photoPath: payload['photoPath']?.toString(),
+          queueOnFailure: false,
+        );
+        return;
       case 'sale_return.create':
         await Api.createSaleReturn(
           businessId: payload['business_id'] as int,

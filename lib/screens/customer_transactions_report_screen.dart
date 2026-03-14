@@ -97,6 +97,8 @@ class _CustomerTransactionsReportScreenState
     return 0;
   }
 
+  bool _isYouGaveType(String type) => type.toUpperCase() == 'CREDIT';
+
   int _asInt(dynamic v, {int fallback = 0}) {
     if (v is int) return v;
     if (v is num) return v.toInt();
@@ -158,7 +160,7 @@ class _CustomerTransactionsReportScreenState
           final id = _asInt(t['id']);
           final amount = _asDouble(t['amount']);
           final type = (t['type'] ?? '').toString().toUpperCase();
-          if (type == 'CREDIT') {
+          if (_isYouGaveType(type)) {
             running += amount;
           } else {
             running -= amount;
@@ -236,11 +238,12 @@ class _CustomerTransactionsReportScreenState
   }
 
   double get _totalYouGave => _filtered
-      .where((e) => e.type == 'CREDIT')
+      .where((e) => _isYouGaveType(e.type))
       .fold(0, (s, e) => s + e.amount);
 
-  double get _totalYouGot =>
-      _filtered.where((e) => e.type == 'DEBIT').fold(0, (s, e) => s + e.amount);
+  double get _totalYouGot => _filtered
+      .where((e) => !_isYouGaveType(e.type))
+      .fold(0, (s, e) => s + e.amount);
 
   double get _netBalance => _totalYouGave - _totalYouGot;
 
@@ -365,9 +368,8 @@ class _CustomerTransactionsReportScreenState
 
   Future<void> _openEntry(_TxRow row) async {
     final attachment = (row.raw['attachment_path'] ?? '').toString();
-    final attachmentUrl = attachment.isNotEmpty
-        ? (Api.resolveMediaUrl(attachment) ?? '')
-        : '';
+    final attachmentUrl =
+        attachment.isNotEmpty ? (Api.resolveMediaUrl(attachment) ?? '') : '';
     await Navigator.push(
       context,
       MaterialPageRoute(
@@ -457,8 +459,8 @@ class _CustomerTransactionsReportScreenState
                   border: pw.Border.all(color: PdfColors.grey300)),
               child: pw.Row(
                 children: [
-                  _pdfMetric('Total Debit(-)', _totalYouGave),
-                  _pdfMetric('Total Credit(+)', _totalYouGot),
+                  _pdfMetric('Total You Gave', _totalYouGave),
+                  _pdfMetric('Total You Got', _totalYouGot),
                   _pdfMetric('Net Balance', _netBalance.abs(),
                       red: _netBalance > 0),
                 ],
@@ -473,8 +475,9 @@ class _CustomerTransactionsReportScreenState
                 0: const pw.FixedColumnWidth(55),
                 1: const pw.FixedColumnWidth(90),
                 2: const pw.FlexColumnWidth(1),
-                3: const pw.FixedColumnWidth(75),
-                4: const pw.FixedColumnWidth(75),
+                3: const pw.FixedColumnWidth(60),
+                4: const pw.FixedColumnWidth(70),
+                5: const pw.FixedColumnWidth(75),
               },
               children: [
                 pw.TableRow(
@@ -483,22 +486,33 @@ class _CustomerTransactionsReportScreenState
                     _pdfCell('Date', bold: true),
                     _pdfCell('Name', bold: true),
                     _pdfCell('Details', bold: true),
-                    _pdfCell('Debit(-)', bold: true),
-                    _pdfCell('Credit(+)', bold: true),
+                    _pdfCell('Type', bold: true),
+                    _pdfCell('Amount', bold: true),
+                    _pdfCell('Balance', bold: true),
                   ],
                 ),
                 ..._filtered.map((e) {
+                  final gave = _isYouGaveType(e.type);
+                  final txColor = gave ? PdfColors.red : PdfColors.green;
+                  final rowBg = gave ? PdfColors.red50 : PdfColors.green50;
                   return pw.TableRow(
+                    decoration: pw.BoxDecoration(color: rowBg),
                     children: [
                       _pdfCell(DateFormat('dd MMM').format(e.createdAt)),
                       _pdfCell(e.customerName),
                       _pdfCell(e.note),
+                      _pdfCell(gave ? 'You Gave' : 'You Got', color: txColor),
+                      _pdfCell(e.amount.toStringAsFixed(2),
+                          color: txColor, bold: true),
                       _pdfCell(
-                          e.type == 'CREDIT' ? e.amount.toStringAsFixed(2) : '',
-                          bg: PdfColors.red50),
-                      _pdfCell(
-                          e.type == 'DEBIT' ? e.amount.toStringAsFixed(2) : '',
-                          bg: PdfColors.green50),
+                        'AED ${e.runningBalance.abs().toStringAsFixed(2)}',
+                        color: e.runningBalance > 0
+                            ? PdfColors.red
+                            : e.runningBalance < 0
+                                ? PdfColors.green
+                                : PdfColors.black,
+                        bold: true,
+                      ),
                     ],
                   );
                 }),
@@ -508,8 +522,11 @@ class _CustomerTransactionsReportScreenState
                     _pdfCell('Grand Total', bold: true),
                     _pdfCell('', bold: true),
                     _pdfCell('', bold: true),
-                    _pdfCell(_totalYouGave.toStringAsFixed(2), bold: true),
-                    _pdfCell(_totalYouGot.toStringAsFixed(2), bold: true),
+                    _pdfCell('', bold: true),
+                    _pdfCell(
+                        'G: ${_totalYouGave.toStringAsFixed(2)} / R: ${_totalYouGot.toStringAsFixed(2)}',
+                        bold: true),
+                    _pdfCell(_netBalance.abs().toStringAsFixed(2), bold: true),
                   ],
                 ),
               ],
@@ -562,7 +579,8 @@ class _CustomerTransactionsReportScreenState
     );
   }
 
-  pw.Widget _pdfCell(String text, {bool bold = false, PdfColor? bg}) {
+  pw.Widget _pdfCell(String text,
+      {bool bold = false, PdfColor? bg, PdfColor? color}) {
     return pw.Container(
       color: bg,
       padding: const pw.EdgeInsets.all(6),
@@ -571,6 +589,7 @@ class _CustomerTransactionsReportScreenState
         style: pw.TextStyle(
           fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
           fontSize: 10,
+          color: color,
         ),
       ),
     );
@@ -762,7 +781,7 @@ class _CustomerTransactionsReportScreenState
                         itemCount: rows.length,
                         itemBuilder: (_, i) {
                           final r = rows[i];
-                          final gave = r.type == 'CREDIT';
+                          final gave = _isYouGaveType(r.type);
                           return InkWell(
                             onTap: () => _openEntry(r),
                             child: Container(

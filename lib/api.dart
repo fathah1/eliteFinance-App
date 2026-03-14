@@ -1805,6 +1805,44 @@ class Api {
     }
   }
 
+  static Future<Map<String, dynamic>> updateSalePayment({
+    required int businessId,
+    required int transactionId,
+    required int paymentNumber,
+    required String date,
+    required int customerId,
+    required double amount,
+    required String paymentMode, // cash|card
+    String? note,
+    List<int>? saleIds,
+  }) async {
+    final payload = {
+      'business_id': businessId,
+      'payment_number': paymentNumber,
+      'date': date,
+      'customer_id': customerId,
+      'amount': amount,
+      'payment_mode': paymentMode,
+      'note': note,
+      'sale_ids': saleIds ?? const [],
+    };
+    final token = await getToken();
+    final res = await http.put(
+      Uri.parse('$baseUrl/sales/payments/$transactionId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode(payload),
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Update sale payment failed: ${res.body}');
+    }
+    final decoded = jsonDecode(res.body);
+    return decoded is Map<String, dynamic> ? decoded : {};
+  }
+
   static Future<List<dynamic>> getSaleReturns({
     required int businessId,
   }) async {
@@ -2163,6 +2201,44 @@ class Api {
       await _prependCachedList('supplier_tx_s_$supplierId', local);
       return local;
     }
+  }
+
+  static Future<Map<String, dynamic>> updatePurchasePayment({
+    required int businessId,
+    required int supplierTransactionId,
+    required int paymentNumber,
+    required String date,
+    required int supplierId,
+    required double amount,
+    required String paymentMode, // cash|card
+    String? note,
+    List<int>? purchaseIds,
+  }) async {
+    final payload = {
+      'business_id': businessId,
+      'payment_number': paymentNumber,
+      'date': date,
+      'supplier_id': supplierId,
+      'amount': amount,
+      'payment_mode': paymentMode,
+      'note': note,
+      'purchase_ids': purchaseIds ?? const [],
+    };
+    final token = await getToken();
+    final res = await http.put(
+      Uri.parse('$baseUrl/purchases/payments/$supplierTransactionId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode(payload),
+    );
+    if (res.statusCode != 200) {
+      throw Exception('Update purchase payment failed: ${res.body}');
+    }
+    final decoded = jsonDecode(res.body);
+    return decoded is Map<String, dynamic> ? decoded : {};
   }
 
   static Future<List<dynamic>> getPurchaseReturns({
@@ -2549,6 +2625,57 @@ class Api {
     } catch (e) {
       if (!_isNetworkError(e)) rethrow;
       return _getCachedMap(cacheKey);
+    }
+  }
+
+  static Future<Map<String, dynamic>> createCashbookEntry({
+    required int businessId,
+    required String direction, // in|out
+    required double amount,
+    required String paymentMode, // cash|card
+    required String date, // yyyy-MM-dd
+    String? note,
+    String? photoPath,
+    bool queueOnFailure = true,
+  }) async {
+    try {
+      final token = await getToken();
+      final req =
+          http.MultipartRequest('POST', Uri.parse('$baseUrl/cashbook/entries'));
+      req.headers['Authorization'] = 'Bearer $token';
+      req.headers['Accept'] = 'application/json';
+      req.fields['business_id'] = businessId.toString();
+      req.fields['direction'] = direction;
+      req.fields['amount'] = amount.toString();
+      req.fields['payment_mode'] = paymentMode;
+      req.fields['date'] = date;
+      if (note != null && note.trim().isNotEmpty) {
+        req.fields['note'] = note.trim();
+      }
+      if (photoPath != null && photoPath.trim().isNotEmpty) {
+        req.files.add(await http.MultipartFile.fromPath('photo', photoPath));
+      }
+      final res = await req.send();
+      final body = await res.stream.bytesToString();
+      if (res.statusCode != 201) {
+        throw Exception('Create cashbook entry failed: $body');
+      }
+      return jsonDecode(body) as Map<String, dynamic>;
+    } catch (e) {
+      if (!queueOnFailure || !_isNetworkError(e)) rethrow;
+      await OfflineQueue.push(
+        action: 'cashbook.create',
+        payload: {
+          'businessId': businessId,
+          'direction': direction,
+          'amount': amount,
+          'paymentMode': paymentMode,
+          'date': date,
+          'note': note,
+          'photoPath': photoPath,
+        },
+      );
+      rethrow;
     }
   }
 

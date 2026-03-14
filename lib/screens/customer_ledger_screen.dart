@@ -47,14 +47,30 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
   }
 
   String _formatDate(String raw) {
-    final dt = DateTime.tryParse(raw);
+    final hasTime = raw.contains('T') || raw.contains(':');
+    final dt = DateTime.tryParse(raw)?.toLocal();
     if (dt == null) return raw;
+    final isMidnight =
+        dt.hour == 0 && dt.minute == 0 && dt.second == 0 && hasTime;
     final y = dt.year.toString().padLeft(4, '0');
     final m = dt.month.toString().padLeft(2, '0');
     final d = dt.day.toString().padLeft(2, '0');
-    final h = dt.hour.toString().padLeft(2, '0');
+    if (isMidnight) {
+      return '$d $m $y';
+    }
+    final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
     final min = dt.minute.toString().padLeft(2, '0');
-    return '$d $m $y • $h:$min';
+    final suffix = dt.hour >= 12 ? 'PM' : 'AM';
+    return '$d $m $y • $h:$min $suffix';
+  }
+
+  String? _txnTag(Map<String, dynamic> t) {
+    final note = (t['note'] ?? '').toString().toLowerCase();
+    if (note.startsWith('payment in #')) return 'Payment In';
+    if (note.startsWith('sale bill #')) return 'Sale';
+    if (note.startsWith('sale return #')) return 'Sale Return';
+    if (note.startsWith('cashbook in')) return 'Cashbook In';
+    return null;
   }
 
   Future<void> _loadReminder() async {
@@ -759,14 +775,8 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
             ),
           ),
           pw.SizedBox(height: 10),
-          pw.Table.fromTextArray(
-            headerStyle: pw.TextStyle(
-              fontWeight: pw.FontWeight.bold,
-              color: PdfColors.black,
-            ),
-            headerDecoration: const pw.BoxDecoration(color: PdfColors.grey200),
-            cellAlignment: pw.Alignment.centerLeft,
-            headerAlignment: pw.Alignment.centerLeft,
+          pw.Table(
+            border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.6),
             columnWidths: {
               0: const pw.FlexColumnWidth(1.3),
               1: const pw.FlexColumnWidth(1.7),
@@ -774,22 +784,53 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
               3: const pw.FlexColumnWidth(1.2),
               4: const pw.FlexColumnWidth(1.2),
             },
-            headers: const ['Date', 'Note', 'Type', 'Amount', 'Balance'],
-            data: entriesAsc.map((t) {
-              final type = (t['type'] ?? '').toString().toUpperCase();
-              final date =
-                  DateTime.tryParse((t['created_at'] ?? '').toString());
-              final dateLabel = date == null
-                  ? '-'
-                  : DateFormat('dd MMM yy, hh:mm a').format(date);
-              return [
-                dateLabel,
-                (t['note'] ?? '').toString(),
-                type == 'CREDIT' ? 'You gave' : 'You got',
-                'AED ${_asDouble(t['amount']).toStringAsFixed(0)}',
-                'AED ${_asDouble(t['running_balance']).toStringAsFixed(0)}',
-              ];
-            }).toList(),
+            children: [
+              pw.TableRow(
+                decoration: const pw.BoxDecoration(color: PdfColors.grey200),
+                children: [
+                  _pdfCell('Date', isHeader: true),
+                  _pdfCell('Note', isHeader: true),
+                  _pdfCell('Type', isHeader: true),
+                  _pdfCell('Amount', isHeader: true),
+                  _pdfCell('Balance', isHeader: true),
+                ],
+              ),
+              ...entriesAsc.map((t) {
+                final type = (t['type'] ?? '').toString().toUpperCase();
+                final isGave = type == 'CREDIT';
+                final date =
+                    DateTime.tryParse((t['created_at'] ?? '').toString());
+                final dateLabel = date == null
+                    ? '-'
+                    : DateFormat('dd MMM yy, hh:mm a').format(date);
+                final rowBg = isGave ? PdfColors.red50 : PdfColors.green50;
+                final rowText = isGave ? PdfColors.red800 : PdfColors.green800;
+                return pw.TableRow(
+                  children: [
+                    _pdfCell(dateLabel),
+                    _pdfCell((t['note'] ?? '').toString()),
+                    _pdfCell(
+                      isGave ? 'You gave' : 'You got',
+                      background: rowBg,
+                      textColor: rowText,
+                      bold: true,
+                    ),
+                    _pdfCell(
+                      'AED ${_asDouble(t['amount']).toStringAsFixed(0)}',
+                      background: rowBg,
+                      textColor: rowText,
+                      bold: true,
+                    ),
+                    _pdfCell(
+                      'AED ${_asDouble(t['running_balance']).toStringAsFixed(0)}',
+                      background: rowBg,
+                      textColor: rowText,
+                      bold: true,
+                    ),
+                  ],
+                );
+              }),
+            ],
           ),
         ],
       ),
@@ -801,6 +842,28 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
     );
     await file.writeAsBytes(await pdf.save(), flush: true);
     return file;
+  }
+
+  static pw.Widget _pdfCell(
+    String text, {
+    bool isHeader = false,
+    PdfColor? background,
+    PdfColor? textColor,
+    bool bold = false,
+  }) {
+    return pw.Container(
+      color: background,
+      padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+      child: pw.Text(
+        text,
+        style: pw.TextStyle(
+          fontSize: isHeader ? 10 : 9.5,
+          fontWeight:
+              (isHeader || bold) ? pw.FontWeight.bold : pw.FontWeight.normal,
+          color: textColor ?? PdfColors.black,
+        ),
+      ),
+    );
   }
 
   Future<void> _downloadCustomerReportPdf() async {
@@ -1261,10 +1324,9 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                             Container(
                               padding: const EdgeInsets.all(10),
                               decoration: BoxDecoration(
-                                color: isGave
-                                    ? const Color(0xFFFDEDED)
-                                    : const Color(0xFFE9F7EF),
+                                color: Colors.white,
                                 borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: Colors.black12),
                               ),
                               child: Icon(
                                 isGave
@@ -1467,6 +1529,9 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
             padding: const EdgeInsets.all(12),
             child: Card(
               elevation: 0,
+              color: Colors.white,
+              surfaceTintColor: Colors.white,
+              shadowColor: Colors.transparent,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -1578,6 +1643,12 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                           final amount = _asDouble(t['amount']);
                           final type = (t['type'] ?? '').toString();
                           final running = _asDouble(t['running_balance']);
+                          final createdRaw = (t['created_at'] ?? t['updated_at'] ?? t['date'] ?? '').toString();
+                          if (index < 3) {
+                            debugPrint('Txn[$index] raw date: $createdRaw');
+                            debugPrint('Txn[$index] parsed local: ${DateTime.tryParse(createdRaw)?.toLocal()}');
+                          }
+                          final tag = _txnTag(t);
                           return InkWell(
                             onTap: () {
                               final attachment =
@@ -1629,70 +1700,120 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                               );
                             },
                             child: Card(
-                              elevation: 0,
+                              color: Colors.white,
+                              elevation: 1,
+                              shadowColor: Colors.black12,
+                              margin: const EdgeInsets.only(bottom: 10),
+                              clipBehavior: Clip.antiAlias,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
                               ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(12),
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(_formatDate(
-                                              t['created_at'] as String)),
-                                          const SizedBox(height: 6),
-                                          Text(
-                                              'Bal. AED ${running.toStringAsFixed(0)}'),
-                                        ],
+                              child: IntrinsicHeight(
+                                child: ConstrainedBox(
+                                  constraints:
+                                      const BoxConstraints(minHeight: 72),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      Expanded(
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(8),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                _formatDate(createdRaw),
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.black54,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 6),
+                                              Text(
+                                                'Bal. AED ${running.toStringAsFixed(0)}',
+                                                style: const TextStyle(
+                                                    fontSize: 12),
+                                              ),
+                                              if (tag != null) ...[
+                                                const SizedBox(height: 6),
+                                                Container(
+                                                  padding: const EdgeInsets
+                                                      .symmetric(
+                                                      horizontal: 8,
+                                                      vertical: 2),
+                                                  decoration: BoxDecoration(
+                                                    color: const Color(
+                                                        0xFFF3F4F6),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            10),
+                                                  ),
+                                                  child: Text(
+                                                    tag,
+                                                    style: const TextStyle(
+                                                      fontSize: 10,
+                                                      color: Colors.black54,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ],
+                                          ),
+                                        ),
                                       ),
-                                    ),
-                                  ),
-                                  Container(
-                                    width: 90,
-                                    color: type == 'CREDIT'
-                                        ? const Color(0xFFFDEDED)
-                                        : Colors.transparent,
-                                    padding: const EdgeInsets.all(12),
-                                    child: Text(
-                                      type == 'CREDIT'
-                                          ? 'AED ${amount.toStringAsFixed(0)}'
-                                          : '',
-                                      textAlign: TextAlign.center,
-                                      style: const TextStyle(
-                                        color: Colors.red,
-                                        fontWeight: FontWeight.bold,
+                                      Container(
+                                        width: 76,
+                                        color: type == 'CREDIT'
+                                            ? const Color(0xFFFDEDED)
+                                            : Colors.transparent,
+                                        alignment: Alignment.center,
+                                        padding: const EdgeInsets.all(8),
+                                        child: Text(
+                                          type == 'CREDIT'
+                                              ? 'AED ${amount.toStringAsFixed(0)}'
+                                              : '',
+                                          textAlign: TextAlign.center,
+                                          style: const TextStyle(
+                                            color: Colors.red,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 14,
+                                          ),
+                                        ),
                                       ),
-                                    ),
-                                  ),
-                                  Container(
-                                    width: 90,
-                                    color: type == 'DEBIT'
-                                        ? const Color(0xFFE9F7EF)
-                                        : Colors.transparent,
-                                    padding: const EdgeInsets.all(12),
-                                    child: Text(
-                                      type == 'DEBIT'
-                                          ? 'AED ${amount.toStringAsFixed(0)}'
-                                          : '',
-                                      textAlign: TextAlign.center,
-                                      style: const TextStyle(
-                                        color: Colors.green,
-                                        fontWeight: FontWeight.bold,
+                                      Container(
+                                        width: 76,
+                                        color: type == 'DEBIT'
+                                            ? const Color(0xFFE9F7EF)
+                                            : Colors.transparent,
+                                        alignment: Alignment.center,
+                                        padding: const EdgeInsets.all(8),
+                                        child: Text(
+                                          type == 'DEBIT'
+                                              ? 'AED ${amount.toStringAsFixed(0)}'
+                                              : '',
+                                          textAlign: TextAlign.center,
+                                          style: const TextStyle(
+                                            color: Colors.green,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 14,
+                                          ),
+                                        ),
                                       ),
-                                    ),
+                                      if ((t['attachment_path'] ?? '')
+                                          .toString()
+                                          .isNotEmpty)
+                                        const Padding(
+                                          padding: EdgeInsets.only(right: 8),
+                                          child: Icon(Icons.attachment,
+                                              size: 16),
+                                        ),
+                                    ],
                                   ),
-                                  if ((t['attachment_path'] ?? '')
-                                      .toString()
-                                      .isNotEmpty)
-                                    const Padding(
-                                      padding: EdgeInsets.only(right: 8),
-                                      child: Icon(Icons.attachment, size: 16),
-                                    ),
-                                ],
+                                ),
                               ),
                             ),
                           );

@@ -8,10 +8,26 @@ class AddBillPaymentScreen extends StatefulWidget {
     super.key,
     required this.isPurchase,
     required this.paymentNumber,
+    this.initialPartyId,
+    this.initialDocIds,
+    this.initialAmount,
+    this.initialNote,
+    this.initialPaymentMode,
+    this.initialDate,
+    this.isEdit = false,
+    this.transactionId,
   });
 
   final bool isPurchase;
   final int paymentNumber;
+  final int? initialPartyId;
+  final List<int>? initialDocIds;
+  final double? initialAmount;
+  final String? initialNote;
+  final String? initialPaymentMode;
+  final DateTime? initialDate;
+  final bool isEdit;
+  final int? transactionId;
 
   @override
   State<AddBillPaymentScreen> createState() => _AddBillPaymentScreenState();
@@ -21,10 +37,10 @@ class _AddBillPaymentScreenState extends State<AddBillPaymentScreen> {
   bool get _isPurchase => widget.isPurchase;
 
   late int _paymentNumber = widget.paymentNumber;
-  DateTime _date = DateTime.now();
+  late DateTime _date = widget.initialDate ?? DateTime.now();
   final TextEditingController _amountController = TextEditingController();
   final TextEditingController _noteController = TextEditingController();
-  String _paymentMode = 'cash';
+  late String _paymentMode = widget.initialPaymentMode ?? 'cash';
   bool _saving = false;
 
   int? _businessId;
@@ -32,6 +48,7 @@ class _AddBillPaymentScreenState extends State<AddBillPaymentScreen> {
   List<Map<String, dynamic>> _parties = [];
   int? _selectedPartyId;
   final Set<int> _selectedDocIds = {};
+  bool _lockedParty = false;
 
   double _toDouble(dynamic value) {
     if (value == null) return 0;
@@ -49,6 +66,9 @@ class _AddBillPaymentScreenState extends State<AddBillPaymentScreen> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialNote != null) {
+      _noteController.text = widget.initialNote!;
+    }
     _load();
   }
 
@@ -80,6 +100,18 @@ class _AddBillPaymentScreenState extends State<AddBillPaymentScreen> {
           : await Api.getSales(businessId: businessId);
       final rows = docs.map((e) => Map<String, dynamic>.from(e as Map)).toList();
       final pendingRows = rows.where((d) => _toDouble(d['balance_due']) > 0).toList();
+      if (widget.initialDocIds != null && widget.initialDocIds!.isNotEmpty) {
+        for (final id in widget.initialDocIds!) {
+          final exists = rows.any((d) => _docId(d) == id);
+          if (!exists) {
+            continue;
+          }
+          final row = rows.firstWhere((d) => _docId(d) == id);
+          if (!pendingRows.contains(row)) {
+            pendingRows.add(row);
+          }
+        }
+      }
 
       final partiesMap = <int, Map<String, dynamic>>{};
       for (final d in pendingRows) {
@@ -97,12 +129,39 @@ class _AddBillPaymentScreenState extends State<AddBillPaymentScreen> {
       setState(() {
         _businessId = businessId;
         _docs = pendingRows;
-        _parties = partiesMap.values.toList();
-        _selectedPartyId = _parties.isEmpty ? null : _toInt(_parties.first['id']);
-        _selectedDocIds
-          ..clear()
-          ..addAll(_pendingDocs.map((e) => _docId(e)));
-        _amountController.text = _pendingTotal.toStringAsFixed(0);
+        final uniqueParties = <int, Map<String, dynamic>>{};
+        for (final p in partiesMap.values) {
+          final id = _toInt(p['id']);
+          if (id <= 0) continue;
+          uniqueParties[id] = p;
+        }
+        _parties = uniqueParties.values.toList();
+        if (widget.initialPartyId != null) {
+          _selectedPartyId = widget.initialPartyId;
+          _lockedParty = true;
+        } else {
+          _selectedPartyId =
+              _parties.isEmpty ? null : _toInt(_parties.first['id']);
+        }
+        if (_selectedPartyId != null &&
+            !_parties.any((p) => _toInt(p['id']) == _selectedPartyId)) {
+          _selectedPartyId = _parties.isEmpty ? null : _toInt(_parties.first['id']);
+        }
+
+        _selectedDocIds.clear();
+        if (widget.initialDocIds != null &&
+            widget.initialDocIds!.isNotEmpty) {
+          _selectedDocIds.addAll(widget.initialDocIds!);
+        } else {
+          _selectedDocIds.addAll(_pendingDocs.map((e) => _docId(e)));
+        }
+
+        final presetAmount = widget.initialAmount;
+        if (presetAmount != null && presetAmount > 0) {
+          _amountController.text = presetAmount.toStringAsFixed(0);
+        } else {
+          _amountController.text = _pendingTotal.toStringAsFixed(0);
+        }
       });
     } catch (_) {}
   }
@@ -181,27 +240,55 @@ class _AddBillPaymentScreenState extends State<AddBillPaymentScreen> {
     setState(() => _saving = true);
     try {
       if (_isPurchase) {
-        await Api.createPurchasePayment(
-          businessId: _businessId!,
-          paymentNumber: _paymentNumber,
-          date: _apiDate(_date),
-          supplierId: _selectedPartyId!,
-          amount: amount,
-          paymentMode: _paymentMode,
-          note: _noteController.text.trim(),
-          purchaseIds: _selectedDocIds.toList(),
-        );
+        if (widget.isEdit && widget.transactionId != null) {
+          await Api.updatePurchasePayment(
+            businessId: _businessId!,
+            supplierTransactionId: widget.transactionId!,
+            paymentNumber: _paymentNumber,
+            date: _apiDate(_date),
+            supplierId: _selectedPartyId!,
+            amount: amount,
+            paymentMode: _paymentMode,
+            note: _noteController.text.trim(),
+            purchaseIds: _selectedDocIds.toList(),
+          );
+        } else {
+          await Api.createPurchasePayment(
+            businessId: _businessId!,
+            paymentNumber: _paymentNumber,
+            date: _apiDate(_date),
+            supplierId: _selectedPartyId!,
+            amount: amount,
+            paymentMode: _paymentMode,
+            note: _noteController.text.trim(),
+            purchaseIds: _selectedDocIds.toList(),
+          );
+        }
       } else {
-        await Api.createSalePayment(
-          businessId: _businessId!,
-          paymentNumber: _paymentNumber,
-          date: _apiDate(_date),
-          customerId: _selectedPartyId!,
-          amount: amount,
-          paymentMode: _paymentMode,
-          note: _noteController.text.trim(),
-          saleIds: _selectedDocIds.toList(),
-        );
+        if (widget.isEdit && widget.transactionId != null) {
+          await Api.updateSalePayment(
+            businessId: _businessId!,
+            transactionId: widget.transactionId!,
+            paymentNumber: _paymentNumber,
+            date: _apiDate(_date),
+            customerId: _selectedPartyId!,
+            amount: amount,
+            paymentMode: _paymentMode,
+            note: _noteController.text.trim(),
+            saleIds: _selectedDocIds.toList(),
+          );
+        } else {
+          await Api.createSalePayment(
+            businessId: _businessId!,
+            paymentNumber: _paymentNumber,
+            date: _apiDate(_date),
+            customerId: _selectedPartyId!,
+            amount: amount,
+            paymentMode: _paymentMode,
+            note: _noteController.text.trim(),
+            saleIds: _selectedDocIds.toList(),
+          );
+        }
       }
       if (!mounted) return;
       Navigator.pop(context, true);
@@ -227,7 +314,14 @@ class _AddBillPaymentScreenState extends State<AddBillPaymentScreen> {
       appBar: AppBar(
         backgroundColor: Colors.white,
         foregroundColor: maroon,
-        title: Text('$heading ${_amountController.text.isEmpty ? 'AED 0' : 'AED ${_amountController.text.trim()}'} to ${selectedParty['name']}'),
+        title: ValueListenableBuilder<TextEditingValue>(
+          valueListenable: _amountController,
+          builder: (context, value, _) {
+            final amountText =
+                value.text.trim().isEmpty ? 'AED 0' : 'AED ${value.text.trim()}';
+            return Text('$heading $amountText to ${selectedParty['name']}');
+          },
+        ),
       ),
       body: ListView(
         padding: const EdgeInsets.all(14),
@@ -277,7 +371,9 @@ class _AddBillPaymentScreenState extends State<AddBillPaymentScreen> {
                     ),
                   )
                   .toList(),
-              onChanged: (v) {
+              onChanged: _lockedParty
+                  ? null
+                  : (v) {
                 if (v == null) return;
                 setState(() {
                   _selectedPartyId = v;
